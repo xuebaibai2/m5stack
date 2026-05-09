@@ -12,6 +12,26 @@ pio run
 
 ## Upload
 
+Before uploading the Weather App build, create a local `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Then set local values:
+
+```dotenv
+WIFI_SSID=YOUR_WIFI_SSID
+WIFI_PASSWORD=YOUR_WIFI_PASSWORD
+WEATHER_LATITUDE=-33.8688
+WEATHER_LONGITUDE=151.2093
+WEATHER_TIMEZONE=Australia/Sydney
+```
+
+`.env` is ignored by git. PlatformIO generates `src/generated_config.h` from
+`.env` before each build. `pio run` still works with placeholders, but
+`pio run -t upload` is blocked until `WIFI_SSID` and `WIFI_PASSWORD` are set.
+
 The local PlatformIO `espressif32` board package does not currently expose a
 `m5stack-sticks3` board ID, so `platformio.ini` uses the closest M5Stack ESP32-S3
 fallback board definition:
