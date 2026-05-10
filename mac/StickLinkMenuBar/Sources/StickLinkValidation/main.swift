@@ -50,7 +50,7 @@ func validateConfigLoading() throws {
     try expect(defaultConfig.messageCharacteristicUUID == "6f7d9f11-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default message characteristic UUID")
     try expect(defaultConfig.deviceInfoCharacteristicUUID == "6f7d9f12-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default info characteristic UUID")
     try expect(defaultConfig.audioCharacteristicUUID == "6f7d9f13-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default audio characteristic UUID")
-    try expect(defaultConfig.audioSampleRate == 8000, "default audio sample rate")
+    try expect(defaultConfig.audioSampleRate == 16000, "default audio sample rate")
 
     let data = """
     {

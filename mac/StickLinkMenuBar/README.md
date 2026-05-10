@@ -66,7 +66,7 @@ Default config:
   "allowedMessageTypes": [],
   "scanTimeoutSeconds": 10,
   "maxRetainedLogs": 200,
-  "audioSampleRate": 8000,
+  "audioSampleRate": 16000,
   "transcriptionLocaleIdentifier": "en-US",
   "pasteTranscriptsToFocusedApp": true,
   "saveRecordingsToDownloads": true
@@ -106,9 +106,9 @@ as a WAV file in:
 ```
 
 Use that file to debug transcription quality. If the WAV is noisy, clipped,
-silent, or choppy, the issue is in the StickS3 mic/BLE audio path. If the WAV
-sounds correct but the transcript is wrong, tune the speech locale or sample
-rate settings.
+silent, too fast/slow, or choppy, the issue is in the StickS3 mic/BLE audio
+path. If the WAV sounds correct but the transcript is wrong, tune the speech
+locale or sample rate settings.
 
 ## Notes
 

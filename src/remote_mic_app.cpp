@@ -15,6 +15,7 @@
 namespace {
 
 constexpr uint32_t kChunkRedrawMs = 250;
+constexpr uint32_t kBleAudioSendIntervalMs = 15;
 constexpr int kConnectionX = 222;
 constexpr int kConnectionY = 16;
 constexpr int kStatusValueX = 8;
@@ -36,15 +37,20 @@ bool bleConnected = false;
 bool appVisible = false;
 bool screenDirty = false;
 bool recording = false;
+bool sendingAudio = false;
 uint32_t sequenceNumber = 0;
 uint32_t lastChunkRedrawAt = 0;
+uint32_t lastAudioSendAt = 0;
 uint32_t lastSendAt = 0;
 uint32_t audioChunkCount = 0;
+size_t recordedSampleCount = 0;
+size_t sendSampleOffset = 0;
 uint32_t displayedAudioChunkCount = UINT32_MAX;
 bool displayedBleConnected = false;
 char displayedStatus[96] = "";
 char lastStatus[96] = "Advertising";
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
+int16_t recordedAudio[kStickLinkMaxRecordingSamples] = {};
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -73,6 +79,7 @@ String deviceInfoJson() {
   doc["audio_characteristic"] = kStickLinkAudioCharacteristicUuid;
   doc["audio_sample_rate"] = kStickLinkAudioSampleRate;
   doc["audio_format"] = "pcm_s16le_mono";
+  doc["audio_mode"] = "buffered_send_after_release";
 
   String output;
   serializeJson(doc, output);
@@ -114,7 +121,10 @@ void drawChunkValue() {
   M5.Display.setTextSize(1);
   M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   M5.Display.setCursor(kChunkValueX, kChunkValueY);
-  M5.Display.printf("Chunks: %lu", static_cast<unsigned long>(audioChunkCount));
+  M5.Display.printf("Chunks: %lu  %.1fs",
+                    static_cast<unsigned long>(audioChunkCount),
+                    recordedSampleCount /
+                        static_cast<float>(kStickLinkAudioSampleRate));
   displayedAudioChunkCount = audioChunkCount;
 }
 
@@ -225,12 +235,51 @@ void remoteMicAppUpdate() {
   if (recording && M5.Mic.isEnabled() &&
       M5.Mic.record(audioBuffer, kStickLinkAudioSamplesPerChunk,
                     kStickLinkAudioSampleRate)) {
-    ++audioChunkCount;
-    if (bleConnected && audioCharacteristic != nullptr) {
-      audioCharacteristic->setValue(
-          reinterpret_cast<uint8_t*>(audioBuffer),
-          kStickLinkAudioSamplesPerChunk * sizeof(int16_t));
-      audioCharacteristic->notify();
+    const size_t remaining = kStickLinkMaxRecordingSamples - recordedSampleCount;
+    const size_t copyCount =
+        remaining < kStickLinkAudioSamplesPerChunk ? remaining
+                                                   : kStickLinkAudioSamplesPerChunk;
+    if (copyCount > 0) {
+      memcpy(&recordedAudio[recordedSampleCount], audioBuffer,
+             copyCount * sizeof(int16_t));
+      recordedSampleCount += copyCount;
+      ++audioChunkCount;
+    } else {
+      snprintf(lastStatus, sizeof(lastStatus), "Max recording reached");
+      remoteMicAppStopRecording();
+    }
+  }
+
+  if (sendingAudio && bleConnected && audioCharacteristic != nullptr) {
+    const uint32_t now = millis();
+    if (now - lastAudioSendAt >= kBleAudioSendIntervalMs) {
+      lastAudioSendAt = now;
+      const size_t remaining = recordedSampleCount - sendSampleOffset;
+      const size_t sendCount =
+          remaining < kStickLinkAudioSamplesPerChunk ? remaining
+                                                     : kStickLinkAudioSamplesPerChunk;
+      if (sendCount > 0) {
+        audioCharacteristic->setValue(
+            reinterpret_cast<uint8_t*>(&recordedAudio[sendSampleOffset]),
+            sendCount * sizeof(int16_t));
+        audioCharacteristic->notify();
+        sendSampleOffset += sendCount;
+      }
+
+      if (sendSampleOffset >= recordedSampleCount) {
+        sendingAudio = false;
+        ++sequenceNumber;
+        const String payload =
+            stickLinkEncodeVoiceEvent("stop", "Remote Mic recording stopped",
+                                      millis(), sequenceNumber);
+        if (messageCharacteristic != nullptr) {
+          messageCharacteristic->setValue(payload.c_str());
+          messageCharacteristic->notify();
+        }
+        snprintf(lastStatus, sizeof(lastStatus), "Sent recording");
+        Serial.println(payload);
+        screenDirty = true;
+      }
     }
   }
 
@@ -248,6 +297,9 @@ void remoteMicAppStartRecording() {
 
   ++sequenceNumber;
   audioChunkCount = 0;
+  recordedSampleCount = 0;
+  sendSampleOffset = 0;
+  sendingAudio = false;
   lastSendAt = millis();
 
   if (!M5.Mic.isEnabled()) {
@@ -266,7 +318,8 @@ void remoteMicAppStartRecording() {
     }
   }
 
-  snprintf(lastStatus, sizeof(lastStatus), bleConnected ? "Recording" : "Recording, no Mac");
+  snprintf(lastStatus, sizeof(lastStatus),
+           bleConnected ? "Recording" : "Recording, no Mac");
   Serial.println(payload);
   screenDirty = true;
   drawRemoteMicScreen();
@@ -278,26 +331,31 @@ void remoteMicAppStopRecording() {
   }
 
   recording = false;
-  ++sequenceNumber;
   lastSendAt = millis();
 
   while (M5.Mic.isRecording()) {
     delay(1);
   }
 
-  const String payload =
-      stickLinkEncodeVoiceEvent("stop", "Remote Mic recording stopped",
-                                lastSendAt, sequenceNumber);
-
-  if (messageCharacteristic != nullptr) {
-    messageCharacteristic->setValue(payload.c_str());
-    if (bleConnected) {
-      messageCharacteristic->notify();
+  if (bleConnected && audioCharacteristic != nullptr && recordedSampleCount > 0) {
+    sendingAudio = true;
+    sendSampleOffset = 0;
+    lastAudioSendAt = 0;
+    snprintf(lastStatus, sizeof(lastStatus), "Sending audio");
+  } else {
+    ++sequenceNumber;
+    const String payload =
+        stickLinkEncodeVoiceEvent("stop", "Remote Mic recording stopped",
+                                  lastSendAt, sequenceNumber);
+    if (messageCharacteristic != nullptr) {
+      messageCharacteristic->setValue(payload.c_str());
+      if (bleConnected) {
+        messageCharacteristic->notify();
+      }
     }
+    snprintf(lastStatus, sizeof(lastStatus), "No Mac connected");
+    Serial.println(payload);
   }
-
-  snprintf(lastStatus, sizeof(lastStatus), bleConnected ? "Sent recording" : "No Mac connected");
-  Serial.println(payload);
   screenDirty = true;
   drawRemoteMicScreen();
 }

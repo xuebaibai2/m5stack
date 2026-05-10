@@ -174,9 +174,9 @@ Current Button A hold flow:
 }
 ```
 
-While Button A is held, Remote Mic sends raw little-endian 16-bit mono PCM audio
-chunks over the audio characteristic. Releasing Button A sends a `voice/stop`
-event.
+While Button A is held, Remote Mic buffers raw little-endian 16-bit mono PCM
+audio on the StickS3. Releasing Button A sends the buffered audio over the audio
+characteristic at a controlled pace, then sends a `voice/stop` event.
 
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.
