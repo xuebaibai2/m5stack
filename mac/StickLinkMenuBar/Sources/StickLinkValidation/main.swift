@@ -94,14 +94,10 @@ func validateWavWriter() throws {
     try expect(wav.suffix(4) == pcm, "wav preserves PCM payload")
 }
 
-func validateMuLawDecoder() throws {
-    let decoder = MuLawDecoder()
-    let silence = decoder.decode(Data([0xff]))
-    try expect(silence == Data([0x00, 0x00]), "mu-law 0xff decodes to PCM silence")
-
-    let negative = decoder.decode(Data([0x00]))
-    try expect(negative.count == 2, "mu-law decoder emits one PCM sample per byte")
-    try expect(negative != Data([0x00, 0x00]), "mu-law non-silence decodes to non-zero PCM")
+func validatePcmU8Decoder() throws {
+    let decoder = PcmU8Decoder()
+    let samples = decoder.decode(Data([0x00, 0x80, 0xff]))
+    try expect(samples == Data([0x00, 0x80, 0x00, 0x00, 0x00, 0x7f]), "pcm u8 decodes to signed PCM16")
 }
 
 func validateLogStore() throws {
@@ -131,7 +127,7 @@ do {
     try validateConfigLoading()
     try validateLogStore()
     try validateWavWriter()
-    try validateMuLawDecoder()
+    try validatePcmU8Decoder()
     print("StickLinkValidation passed")
 } catch {
     fputs("StickLinkValidation failed: \(error)\n", stderr)

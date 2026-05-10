@@ -184,18 +184,17 @@ Current Button A hold flow:
 ```
 
 While Button A is held, Remote Mic records 8 kHz microphone chunks, compresses
-them to 8-bit G.711 mu-law, and streams those chunks live over the audio
+them to 8-bit unsigned PCM, and streams those chunks live over the audio
 characteristic. Releasing Button A sends a `voice/stop` event. The firmware does
 not keep a fixed-duration recording buffer, so there is no firmware-side
 recording cap while Button A remains held. Only the current mic chunk and its
 compressed BLE packet are held in memory briefly.
 
-Remote Mic configures M5Unified mic capture with reduced input magnification,
-light noise filtering, and higher oversampling before `M5.Mic.begin()`. Before
-mu-law encoding, it also applies a small high-pass filter and soft limiter so
-plosive bursts are less likely to dominate the saved WAV.
+Remote Mic configures M5Unified mic capture with reduced input magnification and
+higher oversampling before `M5.Mic.begin()`. It avoids aggressive filtering and
+speech companding so saved WAV files preserve the actual mic waveform.
 
-Each audio notification contains 160 mu-law samples, which is 20 ms of speech at
+Each audio notification contains 160 PCM U8 samples, which is 20 ms of speech at
 8 kHz. Keeping the live stream to 50 notifications per second avoids the
 time-compression and warble that can happen when BLE drops higher-rate packets.
 
@@ -225,7 +224,7 @@ Message helpers:
 
 Keep the protocol generic by using the envelope fields `app`, `type`, and
 `name`. Future voice-trigger or audio metadata events should add new message
-types. Remote Mic uses a separate audio characteristic for mu-law chunks, and the
+types. Remote Mic uses a separate audio characteristic for PCM U8 chunks, and the
 Mac app decodes them to PCM before transcription or WAV writing.
 
 ## Weather App

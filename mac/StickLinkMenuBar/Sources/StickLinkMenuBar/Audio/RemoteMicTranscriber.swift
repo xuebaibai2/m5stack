@@ -19,7 +19,7 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var format: AVAudioFormat
-    private let audioDecoder = MuLawDecoder()
+    private let audioDecoder = PcmU8Decoder()
     private var finalTranscript = ""
     private var receivedAudio = Data()
     private var finishRequested = false
