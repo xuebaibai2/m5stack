@@ -183,7 +183,7 @@ Current Button A hold flow:
 }
 ```
 
-While Button A is held, Remote Mic records 16 kHz microphone chunks, compresses
+While Button A is held, Remote Mic records 8 kHz microphone chunks, compresses
 them to 8-bit G.711 mu-law, and streams those chunks live over the audio
 characteristic. Releasing Button A sends a `voice/stop` event. The firmware does
 not keep a fixed-duration recording buffer, so there is no firmware-side
@@ -194,6 +194,10 @@ Remote Mic configures M5Unified mic capture with reduced input magnification,
 light noise filtering, and higher oversampling before `M5.Mic.begin()`. Before
 mu-law encoding, it also applies a small high-pass filter and soft limiter so
 plosive bursts are less likely to dominate the saved WAV.
+
+Each audio notification contains 160 mu-law samples, which is 20 ms of speech at
+8 kHz. Keeping the live stream to 50 notifications per second avoids the
+time-compression and warble that can happen when BLE drops higher-rate packets.
 
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.

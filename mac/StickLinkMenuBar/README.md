@@ -67,7 +67,7 @@ Default config:
   "allowedMessageTypes": [],
   "scanTimeoutSeconds": 10,
   "maxRetainedLogs": 200,
-  "audioSampleRate": 16000,
+  "audioSampleRate": 8000,
   "transcriptionLocaleIdentifier": "en-US",
   "pasteTranscriptsToFocusedApp": true,
   "saveRecordingsToDownloads": true

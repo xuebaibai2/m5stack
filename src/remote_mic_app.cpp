@@ -28,7 +28,7 @@ constexpr int kChunkValueH = 14;
 constexpr uint8_t kRemoteMicMagnification = 4;
 constexpr uint8_t kRemoteMicNoiseFilterLevel = 2;
 constexpr uint8_t kRemoteMicOverSampling = 4;
-constexpr int32_t kHighPassCoeffQ15 = 30802;
+constexpr int32_t kHighPassCoeffQ15 = 29130;
 constexpr int32_t kSoftLimitStart = 14000;
 constexpr int32_t kSoftLimitMax = 22000;
 

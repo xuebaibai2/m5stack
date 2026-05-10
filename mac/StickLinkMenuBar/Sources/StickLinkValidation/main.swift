@@ -50,7 +50,7 @@ func validateConfigLoading() throws {
     try expect(defaultConfig.messageCharacteristicUUID == "6f7d9f11-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default message characteristic UUID")
     try expect(defaultConfig.deviceInfoCharacteristicUUID == "6f7d9f12-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default info characteristic UUID")
     try expect(defaultConfig.audioCharacteristicUUID == "6f7d9f13-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default audio characteristic UUID")
-    try expect(defaultConfig.audioSampleRate == 16000, "default audio sample rate")
+    try expect(defaultConfig.audioSampleRate == 8000, "default audio sample rate")
 
     let data = """
     {
@@ -59,7 +59,7 @@ func validateConfigLoading() throws {
       "allowedMessageTypes": ["button"],
       "scanTimeoutSeconds": 12,
       "maxRetainedLogs": 3,
-      "audioSampleRate": 16000,
+      "audioSampleRate": 8000,
       "transcriptionLocaleIdentifier": "en-AU",
       "pasteTranscriptsToFocusedApp": false,
       "saveRecordingsToDownloads": false
@@ -73,7 +73,7 @@ func validateConfigLoading() throws {
     try expect(loaded.allowedMessageTypes == ["button"], "partial config overrides message types")
     try expect(loaded.scanTimeoutSeconds == 12, "partial config overrides scan timeout")
     try expect(loaded.maxRetainedLogs == 3, "partial config overrides log retention")
-    try expect(loaded.audioSampleRate == 16000, "partial config overrides sample rate")
+    try expect(loaded.audioSampleRate == 8000, "partial config overrides sample rate")
     try expect(loaded.transcriptionLocaleIdentifier == "en-AU", "partial config overrides locale")
     try expect(loaded.pasteTranscriptsToFocusedApp == false, "partial config overrides output behavior")
     try expect(loaded.saveRecordingsToDownloads == false, "partial config overrides recording save behavior")

@@ -77,8 +77,11 @@ custom BLE service and connects directly through CoreBluetooth.
 
 - BLE audio and macOS Speech delivery require real hardware and were not
   automated here.
-- Audio uses 16 kHz mono 8-bit G.711 mu-law over BLE. The Mac app decodes it to
+- Audio uses 8 kHz mono 8-bit G.711 mu-law over BLE. The Mac app decodes it to
   16-bit PCM for transcription and saved WAV files.
+- The stream uses 160-byte BLE notifications, representing 20 ms of speech at
+  8 kHz. This lowers packet pressure versus 16 kHz live streaming and avoids
+  time-compressed/warbly WAV files when BLE delivery jitters.
 - The firmware applies M5Unified mic conditioning before mu-law encoding:
   reduced input magnification, light noise filtering, higher oversampling, a
   speech high-pass filter, and a soft limiter for plosive peaks. These values

@@ -52,7 +52,7 @@ Audio payload format:
 
 - G.711 mu-law, 8-bit
 - mono
-- 16000 Hz
+- 8000 Hz
 - 160 decoded samples per BLE notification by default
 - 160 bytes per BLE notification by default
 - streamed live while Button A is held

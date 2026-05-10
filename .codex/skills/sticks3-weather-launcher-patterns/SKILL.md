@@ -60,6 +60,8 @@ messaging, or the companion Mac menu bar app.
 - Send small JSON v1 control envelopes over the message characteristic.
 - Send 8-bit G.711 mu-law mono chunks over the audio characteristic; the Mac app
   decodes them back to little-endian 16-bit mono PCM for Speech and WAV files.
+- Keep Remote Mic at 8 kHz / 160 samples per notification so BLE sends 20 ms
+  chunks at 50 notifications per second.
 - Configure M5Unified mic gain/filtering before capture; avoid amplifying the
   StickS3 mic floor before speech compression.
 - For Remote Mic speech quality, prefer light mic noise filtering plus
