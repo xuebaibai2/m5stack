@@ -174,11 +174,11 @@ Current Button A hold flow:
 }
 ```
 
-While Button A is held, Remote Mic buffers raw little-endian 16-bit mono PCM
-audio on the StickS3. Releasing Button A sends the buffered audio over the audio
-characteristic at a controlled pace, then sends a `voice/stop` event.
-The recording buffer is allocated from heap at runtime and targets up to about
-10 seconds when RAM allows it.
+While Button A is held, Remote Mic records 16 kHz microphone chunks, compresses
+them to 4-bit IMA ADPCM, and streams those chunks live over the audio
+characteristic. Releasing Button A sends a `voice/stop` event. The firmware does
+not keep a fixed-duration recording buffer, so there is no firmware-side
+recording cap while Button A remains held.
 
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.
@@ -206,7 +206,8 @@ Message helpers:
 
 Keep the protocol generic by using the envelope fields `app`, `type`, and
 `name`. Future voice-trigger or audio metadata events should add new message
-types. Remote Mic uses a separate audio characteristic for PCM chunks.
+types. Remote Mic uses a separate audio characteristic for ADPCM chunks, and the
+Mac app decodes them to PCM before transcription or WAV writing.
 
 ## Weather App
 

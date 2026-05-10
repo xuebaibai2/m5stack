@@ -94,6 +94,17 @@ func validateWavWriter() throws {
     try expect(wav.suffix(4) == pcm, "wav preserves PCM payload")
 }
 
+func validateAdpcmDecoder() throws {
+    let decoder = AdpcmDecoder()
+    let silence = decoder.decode(Data([0x00, 0x00]))
+    try expect(silence == Data(repeating: 0, count: 8), "adpcm zero nibbles decode to PCM silence")
+
+    decoder.reset()
+    let positiveStep = decoder.decode(Data([0x11]))
+    try expect(positiveStep.count == 4, "adpcm decoder emits two PCM samples per byte")
+    try expect(positiveStep != Data(repeating: 0, count: 4), "adpcm non-zero nibbles decode to non-silence")
+}
+
 func validateLogStore() throws {
     let store = LogStore(maxCount: 2)
     store.append(LogStore.info("first"))
@@ -121,6 +132,7 @@ do {
     try validateConfigLoading()
     try validateLogStore()
     try validateWavWriter()
+    try validateAdpcmDecoder()
     print("StickLinkValidation passed")
 } catch {
     fputs("StickLinkValidation failed: \(error)\n", stderr)

@@ -19,6 +19,7 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var format: AVAudioFormat
+    private let adpcmDecoder = AdpcmDecoder()
     private var finalTranscript = ""
     private var receivedAudio = Data()
     private var finishRequested = false
@@ -56,7 +57,8 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
             return
         }
 
-        guard let buffer = pcmBuffer(from: data) else {
+        let pcmData = adpcmDecoder.decode(data)
+        guard let buffer = pcmBuffer(from: pcmData) else {
             logStore.append(.warning, "Dropped malformed audio chunk: \(data.count) bytes")
             return
         }
@@ -83,6 +85,7 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
         self.finalTranscript = ""
         self.latestTranscript = ""
         self.receivedAudio.removeAll(keepingCapacity: true)
+        self.adpcmDecoder.reset()
         self.finishRequested = false
         self.didFinalizeSession = false
         self.isRecording = true

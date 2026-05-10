@@ -9,10 +9,10 @@ macOS menu bar app over BLE.
 - Remote Mic is launcher app index `1`.
 - Opening Remote Mic shows BLE connection and audio chunk status.
 - Hold Button A to record the StickS3 microphone.
-- While Button A is held, the device records PCM audio locally.
-- Releasing Button A sends the buffered PCM audio over BLE at a controlled pace,
-  then sends a voice stop event so the Mac can finish transcription and output
-  the text.
+- While Button A is held, the device streams 4-bit IMA ADPCM audio chunks over
+  BLE.
+- Releasing Button A sends a voice stop event so the Mac can finish
+  transcription and output the text.
 - Long Button B returns to the launcher. Button A long press is reserved for
   push-to-talk while Remote Mic is open.
 
@@ -77,12 +77,13 @@ custom BLE service and connects directly through CoreBluetooth.
 
 - BLE audio and macOS Speech delivery require real hardware and were not
   automated here.
-- Audio uses 16 kHz mono PCM for short push-to-talk utterances.
-- Recording buffer is allocated from heap at runtime. The firmware targets up to
-  about 10 seconds, but the actual limit depends on available StickS3 RAM and is
-  shown on the Remote Mic screen while recording.
+- Audio uses 16 kHz mono 4-bit IMA ADPCM over BLE. The Mac app decodes it to
+  16-bit PCM for transcription and saved WAV files.
+- There is no fixed firmware recording-duration cap. Recording continues while
+  Button A is held, subject to BLE link quality, battery, and macOS Speech
+  session behavior.
 - Saved WAV files are the first debugging artifact for poor recognition:
-  inspect whether the received audio itself is intelligible.
+  inspect whether the decoded received audio itself is intelligible.
 - macOS text output requires Accessibility permission because the app sends a
   Cmd+V keyboard event after writing the transcript to the clipboard.
 - Flashing Arduino firmware replaces UIFlow2/MicroPython firmware on the device.

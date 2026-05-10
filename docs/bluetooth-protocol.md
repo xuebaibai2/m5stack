@@ -50,14 +50,15 @@ Properties:
 
 Audio payload format:
 
-- little-endian signed 16-bit PCM
+- IMA ADPCM, 4-bit
 - mono
 - 16000 Hz
-- 80 samples per BLE notification by default
-- buffered on the StickS3 while Button A is held, then sent after release at a
-  paced BLE notification rate
-- target recording capacity: up to about 10 seconds, constrained by available
-  StickS3 heap at runtime
+- 320 decoded samples per BLE notification by default
+- 160 bytes per BLE notification by default
+- streamed live while Button A is held
+
+The Mac app decodes the ADPCM stream to little-endian signed 16-bit PCM before
+feeding macOS Speech or writing WAV recordings.
 
 ## Message Envelope
 
@@ -108,9 +109,8 @@ When Button A is pressed and held in Remote Mic, the StickS3 sends:
 }
 ```
 
-While Button A is held, PCM audio is buffered on the StickS3. After Button A is
-released, PCM chunks are sent over the audio characteristic. When all chunks are
-sent, the StickS3 sends:
+While Button A is held, ADPCM audio chunks are sent over the audio
+characteristic. When Button A is released, the StickS3 sends:
 
 ```json
 {
