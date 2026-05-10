@@ -15,7 +15,7 @@ constexpr const char* kStickLinkAudioCharacteristicUuid =
 
 constexpr uint32_t kStickLinkAudioSampleRate = 16000;
 constexpr size_t kStickLinkAudioSamplesPerChunk = 80;
-constexpr size_t kStickLinkMaxRecordingSamples = kStickLinkAudioSampleRate * 4;
+constexpr uint32_t kStickLinkTargetRecordingSeconds = 10;
 
 inline String stickLinkEncodeEvent(const char* app, const char* type,
                                    const char* name, const char* text,

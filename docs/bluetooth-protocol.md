@@ -56,6 +56,8 @@ Audio payload format:
 - 80 samples per BLE notification by default
 - buffered on the StickS3 while Button A is held, then sent after release at a
   paced BLE notification rate
+- target recording capacity: up to about 10 seconds, constrained by available
+  StickS3 heap at runtime
 
 ## Message Envelope
 

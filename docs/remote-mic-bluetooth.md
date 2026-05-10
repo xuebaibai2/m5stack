@@ -78,8 +78,9 @@ custom BLE service and connects directly through CoreBluetooth.
 - BLE audio and macOS Speech delivery require real hardware and were not
   automated here.
 - Audio uses 16 kHz mono PCM for short push-to-talk utterances.
-- Recording is capped at about 4 seconds to keep RAM usage predictable on the
-  StickS3.
+- Recording buffer is allocated from heap at runtime. The firmware targets up to
+  about 10 seconds, but the actual limit depends on available StickS3 RAM and is
+  shown on the Remote Mic screen while recording.
 - Saved WAV files are the first debugging artifact for poor recognition:
   inspect whether the received audio itself is intelligible.
 - macOS text output requires Accessibility permission because the app sends a
