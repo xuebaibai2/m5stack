@@ -37,7 +37,7 @@ It validates:
 
 - protocol message decoding
 - runtime config loading and default fallback behavior
-- PCM U8 audio decoding
+- PCM12 audio decoding
 - log storage retention and message formatting
 
 Build the app:
@@ -107,7 +107,7 @@ as a WAV file in:
 ```
 
 Use that file to debug transcription quality. The app saves decoded 16-bit PCM
-WAV files from the StickS3 PCM U8 stream. If the WAV is noisy, clipped, silent,
+WAV files from the StickS3 PCM12 stream. If the WAV is noisy, clipped, silent,
 too fast/slow, or choppy, inspect the StickS3 mic gain, PCM stream, BLE link,
 or sample rate. If the WAV sounds correct but the transcript is wrong, tune the
 speech locale or sample rate settings.

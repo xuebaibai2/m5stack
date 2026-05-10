@@ -48,7 +48,7 @@ bool displayedBleConnected = false;
 char displayedStatus[96] = "";
 char lastStatus[96] = "Advertising";
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
-uint8_t pcm8Buffer[kStickLinkAudioBytesPerChunk] = {};
+uint8_t pcm12Buffer[kStickLinkAudioBytesPerChunk] = {};
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -76,7 +76,7 @@ String deviceInfoJson() {
   doc["device_info_characteristic"] = kStickLinkDeviceInfoCharacteristicUuid;
   doc["audio_characteristic"] = kStickLinkAudioCharacteristicUuid;
   doc["audio_sample_rate"] = kStickLinkAudioSampleRate;
-  doc["audio_format"] = "pcm_u8_mono";
+  doc["audio_format"] = "pcm_u12le_packed_mono";
   doc["audio_mode"] = "live_compressed_stream";
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
@@ -188,9 +188,19 @@ void startAdvertising() {
   BLEDevice::startAdvertising();
 }
 
-void encodePcm8Chunk(const int16_t* samples, size_t sampleCount, uint8_t* out) {
-  for (size_t i = 0; i < sampleCount; ++i) {
-    out[i] = static_cast<uint8_t>((samples[i] >> 8) + 128);
+uint16_t encodePcm12Sample(int16_t sample) {
+  return static_cast<uint16_t>((static_cast<int32_t>(sample) + 32768) >> 4);
+}
+
+void encodePcm12Chunk(const int16_t* samples, size_t sampleCount, uint8_t* out) {
+  for (size_t i = 0; i < sampleCount; i += 2) {
+    const uint16_t first = encodePcm12Sample(samples[i]);
+    const uint16_t second =
+        (i + 1 < sampleCount) ? encodePcm12Sample(samples[i + 1]) : 2048;
+    *out++ = static_cast<uint8_t>(first & 0xFF);
+    *out++ = static_cast<uint8_t>(((first >> 8) & 0x0F) |
+                                  ((second & 0x0F) << 4));
+    *out++ = static_cast<uint8_t>((second >> 4) & 0xFF);
   }
 }
 
@@ -253,9 +263,9 @@ void remoteMicAppUpdate() {
                     kStickLinkAudioSampleRate)) {
     ++audioChunkCount;
     if (bleConnected && audioCharacteristic != nullptr) {
-      encodePcm8Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
-                      pcm8Buffer);
-      audioCharacteristic->setValue(pcm8Buffer, sizeof(pcm8Buffer));
+      encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
+                       pcm12Buffer);
+      audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));
       audioCharacteristic->notify();
     }
   }
