@@ -1,0 +1,10 @@
+{
+  "serviceUUID": "6f7d9f10-2c3b-4e7a-9a1f-1b2c3d4e5f60",
+  "messageCharacteristicUUID": "6f7d9f11-2c3b-4e7a-9a1f-1b2c3d4e5f60",
+  "deviceInfoCharacteristicUUID": "6f7d9f12-2c3b-4e7a-9a1f-1b2c3d4e5f60",
+  "deviceNamePrefix": "StickS3",
+  "allowedApps": [],
+  "allowedMessageTypes": [],
+  "scanTimeoutSeconds": 10,
+  "maxRetainedLogs": 200
+}

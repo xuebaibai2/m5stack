@@ -2,6 +2,7 @@
 #include <M5GFX.h>
 #include <M5Unified.h>
 
+#include "sensor_app.h"
 #include "weather_app.h"
 
 namespace {
@@ -81,6 +82,11 @@ void drawApp(size_t appIndex) {
     return;
   }
 
+  if (appIndex == 1) {
+    sensorAppStart();
+    return;
+  }
+
   drawPlaceholderApp(appIndex);
 }
 
@@ -95,6 +101,8 @@ void launchSelectedApp() {
 void returnToMenu() {
   if (runningApp == 0) {
     weatherAppStop();
+  } else if (runningApp == 1) {
+    sensorAppStop();
   }
 
   currentScreen = Screen::Menu;
@@ -137,6 +145,8 @@ void handleAppInput() {
 
   if (runningApp == 0 && M5.BtnA.wasClicked()) {
     weatherAppRefresh();
+  } else if (runningApp == 1 && M5.BtnA.wasClicked()) {
+    sensorAppSendButtonA();
   }
 }
 
@@ -151,6 +161,7 @@ void setup() {
   M5.Display.setRotation(1);
   M5.Display.setTextWrap(false);
   weatherAppBegin();
+  sensorAppBegin();
   drawMenu();
 }
 
@@ -165,6 +176,8 @@ void loop() {
       handleAppInput();
       if (runningApp == 0) {
         weatherAppUpdate();
+      } else if (runningApp == 1) {
+        sensorAppUpdate();
       }
       break;
   }

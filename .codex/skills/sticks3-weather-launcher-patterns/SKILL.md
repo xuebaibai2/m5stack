@@ -1,11 +1,12 @@
 ---
 name: sticks3-weather-launcher-patterns
-description: Use when working on M5Stack StickS3 launcher/weather app code that needs .env-based configuration, boot-time Wi-Fi, Open-Meteo fetching, button mappings, and partial redraw animation on M5Unified/M5GFX displays.
+description: Use when working on M5Stack StickS3 launcher, weather app, Sensor App BLE messaging, or companion Mac menu bar code in this repo.
 ---
 
 # StickS3 Weather Launcher Patterns
 
-Use this skill when editing the StickS3 launcher or weather app.
+Use this skill when editing the StickS3 launcher, Weather App, Sensor App BLE
+messaging, or the companion Mac menu bar app.
 
 ## Config
 
@@ -26,6 +27,7 @@ Use this skill when editing the StickS3 launcher or weather app.
 - Button B cycles apps.
 - Button A launches the selected app.
 - In the weather app, short press Button A refreshes data.
+- In the Sensor App, short press Button A sends a BLE event to a connected Mac.
 - Long press Button A or Button B returns to the menu.
 
 ## Weather Fetching
@@ -42,8 +44,40 @@ Use this skill when editing the StickS3 launcher or weather app.
 - Keep text and static widgets outside the animated box.
 - Redraw the smallest possible rectangle when animating moving content.
 
+## Sensor App BLE
+
+- Keep Sensor App firmware in `src/sensor_app.cpp` / `src/sensor_app.h`.
+- Keep shared BLE protocol constants and JSON encoding in
+  `src/stick_link_protocol.h`.
+- StickS3 acts as a BLE peripheral named `StickS3 Link`.
+- Use the custom service and characteristic UUIDs documented in
+  `docs/bluetooth-protocol.md`.
+- Send small JSON v1 event envelopes over BLE notifications.
+- Keep the protocol generic: use `app`, `type`, and `name` fields instead of
+  hardcoding Mac behavior to one StickS3 app.
+- Do not use the event characteristic for raw audio; add a separate chunking
+  design for future voice/audio payloads.
+
+## Mac Companion App
+
+- Keep the native SwiftUI menu bar app under `mac/StickLinkMenuBar/`.
+- Keep it movable: do not depend on files outside its folder at runtime.
+- Load runtime config from `mac/StickLinkMenuBar/config/sticklink.json`.
+- Use CoreBluetooth as the central, scan for the configured service UUID, then
+  subscribe to the message characteristic.
+- Validate Mac-side protocol/config/log behavior with
+  `swift run StickLinkValidation`.
+
 ## M5Unified / M5GFX
 
 - Call `M5.update()` in `loop()`.
 - Use `M5.Display` for all UI drawing.
-- Prefer small functions and separate modules for launcher and weather logic.
+- Prefer small functions and separate modules for launcher, weather, and sensor
+  logic.
+
+## Validation
+
+- Run `pio run` after firmware changes.
+- Run `swift build` and `swift run StickLinkValidation` after Mac app changes.
+- Real BLE discovery, connection, and notifications require manual StickS3 +
+  macOS Bluetooth testing.
