@@ -9,7 +9,7 @@ macOS menu bar app over BLE.
 - Remote Mic is launcher app index `1`.
 - Opening Remote Mic shows BLE connection and audio chunk status.
 - Hold Button A to record the StickS3 microphone.
-- While Button A is held, the device streams 4-bit IMA ADPCM audio chunks over
+- While Button A is held, the device streams 8-bit G.711 mu-law audio chunks over
   BLE.
 - Releasing Button A sends a voice stop event so the Mac can finish
   transcription and output the text.
@@ -77,9 +77,9 @@ custom BLE service and connects directly through CoreBluetooth.
 
 - BLE audio and macOS Speech delivery require real hardware and were not
   automated here.
-- Audio uses 16 kHz mono 4-bit IMA ADPCM over BLE. The Mac app decodes it to
+- Audio uses 16 kHz mono 8-bit G.711 mu-law over BLE. The Mac app decodes it to
   16-bit PCM for transcription and saved WAV files.
-- The firmware applies M5Unified mic conditioning before ADPCM encoding:
+- The firmware applies M5Unified mic conditioning before mu-law encoding:
   reduced input magnification, noise filtering, and higher oversampling. These
   values are also exposed in the BLE device-info JSON for debugging recordings.
 - There is no fixed firmware recording-duration cap. Recording continues while

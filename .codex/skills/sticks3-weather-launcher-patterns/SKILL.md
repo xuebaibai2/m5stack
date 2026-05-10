@@ -58,10 +58,10 @@ messaging, or the companion Mac menu bar app.
 - Use the custom service and characteristic UUIDs documented in
   `docs/bluetooth-protocol.md`.
 - Send small JSON v1 control envelopes over the message characteristic.
-- Send 4-bit IMA ADPCM mono chunks over the audio characteristic; the Mac app
+- Send 8-bit G.711 mu-law mono chunks over the audio characteristic; the Mac app
   decodes them back to little-endian 16-bit mono PCM for Speech and WAV files.
 - Configure M5Unified mic gain/filtering before capture; avoid amplifying the
-  StickS3 mic floor before ADPCM compression.
+  StickS3 mic floor before speech compression.
 - Keep the protocol generic: use `app`, `type`, and `name` fields instead of
   hardcoding Mac behavior to one StickS3 app.
 - Keep BLE audio optimized for short push-to-talk utterances.

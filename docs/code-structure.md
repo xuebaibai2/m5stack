@@ -184,7 +184,7 @@ Current Button A hold flow:
 ```
 
 While Button A is held, Remote Mic records 16 kHz microphone chunks, compresses
-them to 4-bit IMA ADPCM, and streams those chunks live over the audio
+them to 8-bit G.711 mu-law, and streams those chunks live over the audio
 characteristic. Releasing Button A sends a `voice/stop` event. The firmware does
 not keep a fixed-duration recording buffer, so there is no firmware-side
 recording cap while Button A remains held. Only the current mic chunk and its
@@ -192,7 +192,7 @@ compressed BLE packet are held in memory briefly.
 
 Remote Mic configures M5Unified mic capture with reduced input magnification,
 noise filtering, and higher oversampling before `M5.Mic.begin()` to keep the
-saved WAV from amplifying the StickS3 mic floor before ADPCM compression.
+saved WAV from amplifying the StickS3 mic floor before speech compression.
 
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.
@@ -220,7 +220,7 @@ Message helpers:
 
 Keep the protocol generic by using the envelope fields `app`, `type`, and
 `name`. Future voice-trigger or audio metadata events should add new message
-types. Remote Mic uses a separate audio characteristic for ADPCM chunks, and the
+types. Remote Mic uses a separate audio characteristic for mu-law chunks, and the
 Mac app decodes them to PCM before transcription or WAV writing.
 
 ## Weather App

@@ -48,24 +48,7 @@ bool displayedBleConnected = false;
 char displayedStatus[96] = "";
 char lastStatus[96] = "Advertising";
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
-uint8_t adpcmBuffer[kStickLinkAudioBytesPerChunk] = {};
-int32_t adpcmPredictor = 0;
-int adpcmStepIndex = 0;
-
-constexpr int kAdpcmIndexTable[16] = {
-    -1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
-
-constexpr int kAdpcmStepTable[89] = {
-    7,     8,     9,     10,    11,    12,    13,    14,    16,
-    17,    19,    21,    23,    25,    28,    31,    34,    37,
-    41,    45,    50,    55,    60,    66,    73,    80,    88,
-    97,    107,   118,   130,   143,   157,   173,   190,   209,
-    230,   253,   279,   307,   337,   371,   408,   449,   494,
-    544,   598,   658,   724,   796,   876,   963,   1060,  1166,
-    1282,  1411,  1552,  1707,  1878,  2066,  2272,  2499,  2749,
-    3024,  3327,  3660,  4026,  4428,  4871,  5358,  5894,  6484,
-    7132,  7845,  8630,  9493,  10442, 11487, 12635, 13899, 15289,
-    16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767};
+uint8_t mulawBuffer[kStickLinkAudioBytesPerChunk] = {};
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -93,7 +76,7 @@ String deviceInfoJson() {
   doc["device_info_characteristic"] = kStickLinkDeviceInfoCharacteristicUuid;
   doc["audio_characteristic"] = kStickLinkAudioCharacteristicUuid;
   doc["audio_sample_rate"] = kStickLinkAudioSampleRate;
-  doc["audio_format"] = "ima_adpcm_4bit_mono";
+  doc["audio_format"] = "g711_mulaw_8bit_mono";
   doc["audio_mode"] = "live_compressed_stream";
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
@@ -205,61 +188,37 @@ void startAdvertising() {
   BLEDevice::startAdvertising();
 }
 
-uint8_t encodeAdpcmSample(int16_t sample) {
-  int step = kAdpcmStepTable[adpcmStepIndex];
-  int diff = sample - adpcmPredictor;
-  uint8_t code = 0;
+uint8_t encodeMuLawSample(int16_t sample) {
+  constexpr int kBias = 0x84;
+  constexpr int kClip = 32635;
 
-  if (diff < 0) {
-    code = 8;
-    diff = -diff;
-  }
-
-  int delta = step >> 3;
-  if (diff >= step) {
-    code |= 4;
-    diff -= step;
-    delta += step;
-  }
-  step >>= 1;
-  if (diff >= step) {
-    code |= 2;
-    diff -= step;
-    delta += step;
-  }
-  step >>= 1;
-  if (diff >= step) {
-    code |= 1;
-    delta += step;
+  int value = sample;
+  uint8_t mask = 0xFF;
+  if (value < 0) {
+    value = -value;
+    mask = 0x7F;
   }
 
-  if (code & 8) {
-    adpcmPredictor -= delta;
-  } else {
-    adpcmPredictor += delta;
+  if (value > kClip) {
+    value = kClip;
   }
-  if (adpcmPredictor > INT16_MAX) {
-    adpcmPredictor = INT16_MAX;
-  } else if (adpcmPredictor < INT16_MIN) {
-    adpcmPredictor = INT16_MIN;
-  }
+  value += kBias;
 
-  adpcmStepIndex += kAdpcmIndexTable[code & 0x0F];
-  if (adpcmStepIndex < 0) {
-    adpcmStepIndex = 0;
-  } else if (adpcmStepIndex > 88) {
-    adpcmStepIndex = 88;
+  uint8_t segment = 0;
+  for (int threshold = 0x4000; (value & threshold) == 0 && segment < 7;
+       threshold >>= 1) {
+    ++segment;
   }
+  segment = 7 - segment;
 
-  return code & 0x0F;
+  const uint8_t quantization =
+      static_cast<uint8_t>((value >> (segment + 3)) & 0x0F);
+  return static_cast<uint8_t>(~((segment << 4) | quantization) & mask);
 }
 
-void encodeAdpcmChunk(const int16_t* samples, size_t sampleCount, uint8_t* out) {
-  for (size_t i = 0; i < sampleCount; i += 2) {
-    const uint8_t lo = encodeAdpcmSample(samples[i]);
-    const uint8_t hi =
-        (i + 1 < sampleCount) ? encodeAdpcmSample(samples[i + 1]) : 0;
-    *out++ = lo | (hi << 4);
+void encodeMuLawChunk(const int16_t* samples, size_t sampleCount, uint8_t* out) {
+  for (size_t i = 0; i < sampleCount; ++i) {
+    out[i] = encodeMuLawSample(samples[i]);
   }
 }
 
@@ -322,9 +281,9 @@ void remoteMicAppUpdate() {
                     kStickLinkAudioSampleRate)) {
     ++audioChunkCount;
     if (bleConnected && audioCharacteristic != nullptr) {
-      encodeAdpcmChunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
-                       adpcmBuffer);
-      audioCharacteristic->setValue(adpcmBuffer, sizeof(adpcmBuffer));
+      encodeMuLawChunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
+                       mulawBuffer);
+      audioCharacteristic->setValue(mulawBuffer, sizeof(mulawBuffer));
       audioCharacteristic->notify();
     }
   }
@@ -343,8 +302,6 @@ void remoteMicAppStartRecording() {
 
   ++sequenceNumber;
   audioChunkCount = 0;
-  adpcmPredictor = 0;
-  adpcmStepIndex = 0;
   lastSendAt = millis();
 
   if (!M5.Mic.isEnabled()) {

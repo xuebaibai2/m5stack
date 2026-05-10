@@ -50,14 +50,14 @@ Properties:
 
 Audio payload format:
 
-- IMA ADPCM, 4-bit
+- G.711 mu-law, 8-bit
 - mono
 - 16000 Hz
-- 320 decoded samples per BLE notification by default
+- 160 decoded samples per BLE notification by default
 - 160 bytes per BLE notification by default
 - streamed live while Button A is held
 
-The Mac app decodes the ADPCM stream to little-endian signed 16-bit PCM before
+The Mac app decodes the mu-law stream to little-endian signed 16-bit PCM before
 feeding macOS Speech or writing WAV recordings.
 
 ## Message Envelope
@@ -109,7 +109,7 @@ When Button A is pressed and held in Remote Mic, the StickS3 sends:
 }
 ```
 
-While Button A is held, ADPCM audio chunks are sent over the audio
+While Button A is held, mu-law audio chunks are sent over the audio
 characteristic. When Button A is released, the StickS3 sends:
 
 ```json
