@@ -14,7 +14,17 @@
 
 namespace {
 
-constexpr uint32_t kStatusRedrawMs = 1000;
+constexpr uint32_t kChunkRedrawMs = 250;
+constexpr int kConnectionX = 222;
+constexpr int kConnectionY = 16;
+constexpr int kStatusValueX = 8;
+constexpr int kStatusValueY = 86;
+constexpr int kStatusValueW = 216;
+constexpr int kStatusValueH = 14;
+constexpr int kChunkValueX = 8;
+constexpr int kChunkValueY = 124;
+constexpr int kChunkValueW = 216;
+constexpr int kChunkValueH = 14;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -27,9 +37,12 @@ bool appVisible = false;
 bool screenDirty = false;
 bool recording = false;
 uint32_t sequenceNumber = 0;
-uint32_t lastRedrawAt = 0;
+uint32_t lastChunkRedrawAt = 0;
 uint32_t lastSendAt = 0;
 uint32_t audioChunkCount = 0;
+uint32_t displayedAudioChunkCount = UINT32_MAX;
+bool displayedBleConnected = false;
+char displayedStatus[96] = "";
 char lastStatus[96] = "Advertising";
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 
@@ -66,6 +79,63 @@ String deviceInfoJson() {
   return output;
 }
 
+void drawConnectionIndicator() {
+  if (!appVisible) {
+    return;
+  }
+
+  M5.Display.fillRect(kConnectionX - 8, kConnectionY - 8, 20, 20, TFT_BLACK);
+  M5.Display.fillCircle(kConnectionX, kConnectionY, 5,
+                        bleConnected ? TFT_GREEN : TFT_ORANGE);
+  displayedBleConnected = bleConnected;
+}
+
+void drawStatusValue() {
+  if (!appVisible) {
+    return;
+  }
+
+  M5.Display.fillRect(kStatusValueX, kStatusValueY, kStatusValueW,
+                      kStatusValueH, TFT_BLACK);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(bleConnected ? TFT_GREEN : TFT_ORANGE, TFT_BLACK);
+  M5.Display.setCursor(kStatusValueX, kStatusValueY);
+  M5.Display.print(lastStatus);
+  strlcpy(displayedStatus, lastStatus, sizeof(displayedStatus));
+}
+
+void drawChunkValue() {
+  if (!appVisible) {
+    return;
+  }
+
+  M5.Display.fillRect(kChunkValueX, kChunkValueY, kChunkValueW, kChunkValueH,
+                      TFT_BLACK);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  M5.Display.setCursor(kChunkValueX, kChunkValueY);
+  M5.Display.printf("Chunks: %lu", static_cast<unsigned long>(audioChunkCount));
+  displayedAudioChunkCount = audioChunkCount;
+}
+
+void drawDynamicRegions(bool force = false) {
+  if (force || displayedBleConnected != bleConnected) {
+    drawConnectionIndicator();
+  }
+
+  if (force || strcmp(displayedStatus, lastStatus) != 0) {
+    drawStatusValue();
+  }
+
+  const uint32_t now = millis();
+  if (force || displayedAudioChunkCount != audioChunkCount) {
+    if (force || !recording || now - lastChunkRedrawAt >= kChunkRedrawMs) {
+      drawChunkValue();
+      lastChunkRedrawAt = now;
+    }
+  }
+}
+
 void drawRemoteMicScreen() {
   if (!appVisible) {
     return;
@@ -76,9 +146,6 @@ void drawRemoteMicScreen() {
   M5.Display.setTextSize(2);
   M5.Display.setCursor(8, 8);
   M5.Display.print("Remote Mic");
-
-  M5.Display.fillCircle(M5.Display.width() - 18, 16, 5,
-                        bleConnected ? TFT_GREEN : TFT_ORANGE);
 
   M5.Display.setTextSize(1);
   M5.Display.setCursor(8, 36);
@@ -91,21 +158,13 @@ void drawRemoteMicScreen() {
   M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   M5.Display.setCursor(8, 72);
   M5.Display.print("Status");
-  M5.Display.setCursor(8, 86);
-  M5.Display.setTextColor(bleConnected ? TFT_GREEN : TFT_ORANGE, TFT_BLACK);
-  M5.Display.print(lastStatus);
 
   M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   M5.Display.setCursor(8, 110);
   M5.Display.printf("Hold A: talk  Seq: %lu",
                     static_cast<unsigned long>(sequenceNumber));
 
-  if (lastSendAt > 0) {
-    M5.Display.setCursor(8, 124);
-    M5.Display.printf("Chunks: %lu", static_cast<unsigned long>(audioChunkCount));
-  }
-
-  lastRedrawAt = millis();
+  drawDynamicRegions(true);
   screenDirty = false;
 }
 
@@ -173,12 +232,12 @@ void remoteMicAppUpdate() {
           kStickLinkAudioSamplesPerChunk * sizeof(int16_t));
       audioCharacteristic->notify();
     }
-    screenDirty = true;
   }
 
-  const uint32_t now = millis();
-  if (screenDirty || (appVisible && now - lastRedrawAt >= kStatusRedrawMs)) {
+  if (screenDirty) {
     drawRemoteMicScreen();
+  } else {
+    drawDynamicRegions();
   }
 }
 
