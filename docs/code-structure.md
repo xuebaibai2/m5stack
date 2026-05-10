@@ -309,6 +309,8 @@ Important files:
   CoreBluetooth central implementation.
 - `Sources/StickLinkMenuBar/Audio/RemoteMicTranscriber.swift`: Speech
   recognition pipeline for Remote Mic PCM chunks.
+- `Sources/StickLinkMenuBar/Audio/WavFileWriter.swift`: saves received PCM as
+  WAV files for debugging and review.
 - `Sources/StickLinkMenuBar/Output/TextOutputController.swift`: clipboard and
   Cmd+V text output into the focused macOS app.
 - `Sources/StickLinkMenuBar/Views/`: SwiftUI status, logs, and config views.

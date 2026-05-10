@@ -61,7 +61,8 @@ func validateConfigLoading() throws {
       "maxRetainedLogs": 3,
       "audioSampleRate": 16000,
       "transcriptionLocaleIdentifier": "en-AU",
-      "pasteTranscriptsToFocusedApp": false
+      "pasteTranscriptsToFocusedApp": false,
+      "saveRecordingsToDownloads": false
     }
     """.data(using: .utf8)!
 
@@ -75,6 +76,22 @@ func validateConfigLoading() throws {
     try expect(loaded.audioSampleRate == 16000, "partial config overrides sample rate")
     try expect(loaded.transcriptionLocaleIdentifier == "en-AU", "partial config overrides locale")
     try expect(loaded.pasteTranscriptsToFocusedApp == false, "partial config overrides output behavior")
+    try expect(loaded.saveRecordingsToDownloads == false, "partial config overrides recording save behavior")
+}
+
+func validateWavWriter() throws {
+    let tempURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("StickLinkValidation-\(UUID().uuidString).wav")
+    defer { try? FileManager.default.removeItem(at: tempURL) }
+
+    let pcm = Data([0x00, 0x00, 0xff, 0x7f])
+    try WavFileWriter.writePCM16Mono(data: pcm, sampleRate: 8000, to: tempURL)
+    let wav = try Data(contentsOf: tempURL)
+
+    try expect(wav.count == 48, "wav size includes 44-byte header plus PCM")
+    try expect(String(data: wav.prefix(4), encoding: .ascii) == "RIFF", "wav RIFF header")
+    try expect(String(data: wav.dropFirst(8).prefix(4), encoding: .ascii) == "WAVE", "wav WAVE header")
+    try expect(wav.suffix(4) == pcm, "wav preserves PCM payload")
 }
 
 func validateLogStore() throws {
@@ -103,6 +120,7 @@ do {
     try validateMessageDecoding()
     try validateConfigLoading()
     try validateLogStore()
+    try validateWavWriter()
     print("StickLinkValidation passed")
 } catch {
     fputs("StickLinkValidation failed: \(error)\n", stderr)

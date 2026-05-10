@@ -20,6 +20,9 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
     private var task: SFSpeechRecognitionTask?
     private var format: AVAudioFormat
     private var finalTranscript = ""
+    private var receivedAudio = Data()
+    private var finishRequested = false
+    private var didFinalizeSession = false
 
     public init(config: StickLinkConfig, logStore: LogStore, outputController: TextOutputController) {
         self.config = config
@@ -79,6 +82,9 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
         self.request = request
         self.finalTranscript = ""
         self.latestTranscript = ""
+        self.receivedAudio.removeAll(keepingCapacity: true)
+        self.finishRequested = false
+        self.didFinalizeSession = false
         self.isRecording = true
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
@@ -96,7 +102,10 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
 
             if let error {
                 self.logStore.append(.error, "Speech recognition failed: \(error.localizedDescription)")
-                self.isRecording = false
+            }
+
+            if self.finishRequested, result?.isFinal == true || error != nil {
+                self.finalizeSession(shouldPaste: true)
             }
         }
 
@@ -108,11 +117,28 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
             return
         }
 
+        saveRecordingIfNeeded()
+        finishRequested = shouldPaste
         request?.endAudio()
         task?.finish()
         request = nil
-        task = nil
         isRecording = false
+
+        if shouldPaste {
+            logStore.append(.info, "Remote Mic audio ended; waiting for final transcript")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.finalizeSession(shouldPaste: true)
+            }
+        }
+    }
+
+    private func finalizeSession(shouldPaste: Bool) {
+        guard !didFinalizeSession else {
+            return
+        }
+
+        didFinalizeSession = true
+        task = nil
 
         let transcript = finalTranscript.isEmpty ? latestTranscript : finalTranscript
         if transcript.isEmpty {
@@ -125,11 +151,34 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
         }
     }
 
+    private func saveRecordingIfNeeded() {
+        guard config.saveRecordingsToDownloads, !receivedAudio.isEmpty else {
+            return
+        }
+
+        do {
+            let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            let filename = "StickLink-RemoteMic-\(formatter.string(from: Date())).wav"
+            let url = downloads.appendingPathComponent(filename)
+            try WavFileWriter.writePCM16Mono(data: receivedAudio,
+                                             sampleRate: Int(config.audioSampleRate),
+                                             to: url)
+            logStore.append(.info, "Saved recording: \(url.path)")
+        } catch {
+            logStore.append(.error, "Recording save failed: \(error.localizedDescription)")
+        }
+    }
+
     private func pcmBuffer(from data: Data) -> AVAudioPCMBuffer? {
         guard data.count >= MemoryLayout<Int16>.size,
               data.count % MemoryLayout<Int16>.size == 0 else {
             return nil
         }
+
+        receivedAudio.append(data)
 
         let sampleCount = data.count / MemoryLayout<Int16>.size
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleCount)),

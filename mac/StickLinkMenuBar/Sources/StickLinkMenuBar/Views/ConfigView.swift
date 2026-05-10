@@ -48,6 +48,10 @@ public struct ConfigView: View {
                     Text("Output").foregroundStyle(.secondary)
                     Text(config.pasteTranscriptsToFocusedApp ? "Paste to focused app" : "Log only")
                 }
+                GridRow {
+                    Text("Recordings").foregroundStyle(.secondary)
+                    Text(config.saveRecordingsToDownloads ? "Save to Downloads" : "Do not save")
+                }
             }
             .font(.caption)
 

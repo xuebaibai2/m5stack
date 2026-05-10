@@ -55,6 +55,7 @@ custom BLE service and connects directly through CoreBluetooth.
 8. Hold Button A, speak into the StickS3, then release Button A.
 9. Confirm the Mac app log shows a transcript and the focused editor receives
    the text.
+10. Check `~/Downloads/StickLink-RemoteMic-*.wav` if the transcript is wrong.
 
 ## Manual StickS3 Test
 
@@ -67,6 +68,7 @@ custom BLE service and connects directly through CoreBluetooth.
 - [ ] Holding Button A sends audio chunks.
 - [ ] Releasing Button A triggers Mac transcription.
 - [ ] Transcript is pasted into the focused text editor.
+- [ ] A WAV recording is saved in `~/Downloads`.
 - [ ] Long Button B returns to the launcher.
 - [ ] Serial monitor has no repeated crash or reboot loop.
 
@@ -75,6 +77,8 @@ custom BLE service and connects directly through CoreBluetooth.
 - BLE audio and macOS Speech delivery require real hardware and were not
   automated here.
 - Audio uses low-rate mono PCM for short push-to-talk utterances.
+- Saved WAV files are the first debugging artifact for poor recognition:
+  inspect whether the received audio itself is intelligible.
 - macOS text output requires Accessibility permission because the app sends a
   Cmd+V keyboard event after writing the transcript to the clipboard.
 - Flashing Arduino firmware replaces UIFlow2/MicroPython firmware on the device.

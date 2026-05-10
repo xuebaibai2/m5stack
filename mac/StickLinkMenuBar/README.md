@@ -68,7 +68,8 @@ Default config:
   "maxRetainedLogs": 200,
   "audioSampleRate": 8000,
   "transcriptionLocaleIdentifier": "en-US",
-  "pasteTranscriptsToFocusedApp": true
+  "pasteTranscriptsToFocusedApp": true,
+  "saveRecordingsToDownloads": true
 }
 ```
 
@@ -96,6 +97,18 @@ Transcript: <recognized speech>
 
 If `pasteTranscriptsToFocusedApp` is `true`, the transcript is copied to the
 clipboard and pasted into the focused editor with Cmd+V.
+
+When `saveRecordingsToDownloads` is `true`, each Remote Mic utterance is saved
+as a WAV file in:
+
+```text
+~/Downloads/StickLink-RemoteMic-YYYYMMDD-HHMMSS.wav
+```
+
+Use that file to debug transcription quality. If the WAV is noisy, clipped,
+silent, or choppy, the issue is in the StickS3 mic/BLE audio path. If the WAV
+sounds correct but the transcript is wrong, tune the speech locale or sample
+rate settings.
 
 ## Notes
 

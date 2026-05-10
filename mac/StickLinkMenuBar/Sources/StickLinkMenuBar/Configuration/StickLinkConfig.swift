@@ -13,6 +13,7 @@ public struct StickLinkConfig: Codable, Equatable {
     public var audioSampleRate: Double
     public var transcriptionLocaleIdentifier: String
     public var pasteTranscriptsToFocusedApp: Bool
+    public var saveRecordingsToDownloads: Bool
 
     public static let `default` = StickLinkConfig(
         serviceUUID: "6f7d9f10-2c3b-4e7a-9a1f-1b2c3d4e5f60",
@@ -26,7 +27,8 @@ public struct StickLinkConfig: Codable, Equatable {
         maxRetainedLogs: 200,
         audioSampleRate: 8000,
         transcriptionLocaleIdentifier: "en-US",
-        pasteTranscriptsToFocusedApp: true
+        pasteTranscriptsToFocusedApp: true,
+        saveRecordingsToDownloads: true
     )
 
     public static func load(data: Data) throws -> StickLinkConfig {
@@ -44,6 +46,7 @@ public struct StickLinkConfig: Codable, Equatable {
         config.audioSampleRate = patch.audioSampleRate ?? config.audioSampleRate
         config.transcriptionLocaleIdentifier = patch.transcriptionLocaleIdentifier ?? config.transcriptionLocaleIdentifier
         config.pasteTranscriptsToFocusedApp = patch.pasteTranscriptsToFocusedApp ?? config.pasteTranscriptsToFocusedApp
+        config.saveRecordingsToDownloads = patch.saveRecordingsToDownloads ?? config.saveRecordingsToDownloads
         return config
     }
 
@@ -71,4 +74,5 @@ private struct PartialStickLinkConfig: Codable {
     var audioSampleRate: Double?
     var transcriptionLocaleIdentifier: String?
     var pasteTranscriptsToFocusedApp: Bool?
+    var saveRecordingsToDownloads: Bool?
 }
