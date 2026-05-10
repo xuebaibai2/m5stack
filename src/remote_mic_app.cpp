@@ -25,6 +25,9 @@ constexpr int kChunkValueX = 8;
 constexpr int kChunkValueY = 124;
 constexpr int kChunkValueW = 216;
 constexpr int kChunkValueH = 14;
+constexpr uint8_t kRemoteMicMagnification = 8;
+constexpr uint8_t kRemoteMicNoiseFilterLevel = 8;
+constexpr uint8_t kRemoteMicOverSampling = 4;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -92,6 +95,9 @@ String deviceInfoJson() {
   doc["audio_sample_rate"] = kStickLinkAudioSampleRate;
   doc["audio_format"] = "ima_adpcm_4bit_mono";
   doc["audio_mode"] = "live_compressed_stream";
+  doc["mic_magnification"] = kRemoteMicMagnification;
+  doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
+  doc["mic_over_sampling"] = kRemoteMicOverSampling;
 
   String output;
   serializeJson(doc, output);
@@ -257,6 +263,15 @@ void encodeAdpcmChunk(const int16_t* samples, size_t sampleCount, uint8_t* out) 
   }
 }
 
+void configureRemoteMicInput() {
+  auto cfg = M5.Mic.config();
+  cfg.sample_rate = kStickLinkAudioSampleRate;
+  cfg.magnification = kRemoteMicMagnification;
+  cfg.noise_filter_level = kRemoteMicNoiseFilterLevel;
+  cfg.over_sampling = kRemoteMicOverSampling;
+  M5.Mic.config(cfg);
+}
+
 }  // namespace
 
 void remoteMicAppBegin() {
@@ -334,6 +349,7 @@ void remoteMicAppStartRecording() {
 
   if (!M5.Mic.isEnabled()) {
     M5.Speaker.end();
+    configureRemoteMicInput();
     M5.Mic.begin();
   }
 

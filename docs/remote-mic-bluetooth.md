@@ -79,6 +79,9 @@ custom BLE service and connects directly through CoreBluetooth.
   automated here.
 - Audio uses 16 kHz mono 4-bit IMA ADPCM over BLE. The Mac app decodes it to
   16-bit PCM for transcription and saved WAV files.
+- The firmware applies M5Unified mic conditioning before ADPCM encoding:
+  reduced input magnification, noise filtering, and higher oversampling. These
+  values are also exposed in the BLE device-info JSON for debugging recordings.
 - There is no fixed firmware recording-duration cap. Recording continues while
   Button A is held, subject to BLE link quality, battery, and macOS Speech
   session behavior. The StickS3 only holds the current mic chunk and outgoing

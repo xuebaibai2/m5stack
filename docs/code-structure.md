@@ -181,6 +181,10 @@ not keep a fixed-duration recording buffer, so there is no firmware-side
 recording cap while Button A remains held. Only the current mic chunk and its
 compressed BLE packet are held in memory briefly.
 
+Remote Mic configures M5Unified mic capture with reduced input magnification,
+noise filtering, and higher oversampling before `M5.Mic.begin()` to keep the
+saved WAV from amplifying the StickS3 mic floor before ADPCM compression.
+
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.
 
