@@ -80,8 +80,9 @@ custom BLE service and connects directly through CoreBluetooth.
 - Audio uses 16 kHz mono 8-bit G.711 mu-law over BLE. The Mac app decodes it to
   16-bit PCM for transcription and saved WAV files.
 - The firmware applies M5Unified mic conditioning before mu-law encoding:
-  reduced input magnification, noise filtering, and higher oversampling. These
-  values are also exposed in the BLE device-info JSON for debugging recordings.
+  reduced input magnification, light noise filtering, higher oversampling, a
+  speech high-pass filter, and a soft limiter for plosive peaks. These values
+  are also exposed in the BLE device-info JSON for debugging recordings.
 - There is no fixed firmware recording-duration cap. Recording continues while
   Button A is held, subject to BLE link quality, battery, and macOS Speech
   session behavior. The StickS3 only holds the current mic chunk and outgoing

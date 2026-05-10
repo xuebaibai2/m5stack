@@ -191,8 +191,9 @@ recording cap while Button A remains held. Only the current mic chunk and its
 compressed BLE packet are held in memory briefly.
 
 Remote Mic configures M5Unified mic capture with reduced input magnification,
-noise filtering, and higher oversampling before `M5.Mic.begin()` to keep the
-saved WAV from amplifying the StickS3 mic floor before speech compression.
+light noise filtering, and higher oversampling before `M5.Mic.begin()`. Before
+mu-law encoding, it also applies a small high-pass filter and soft limiter so
+plosive bursts are less likely to dominate the saved WAV.
 
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.

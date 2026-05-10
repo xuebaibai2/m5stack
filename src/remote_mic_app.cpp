@@ -25,9 +25,12 @@ constexpr int kChunkValueX = 8;
 constexpr int kChunkValueY = 124;
 constexpr int kChunkValueW = 216;
 constexpr int kChunkValueH = 14;
-constexpr uint8_t kRemoteMicMagnification = 8;
-constexpr uint8_t kRemoteMicNoiseFilterLevel = 8;
+constexpr uint8_t kRemoteMicMagnification = 4;
+constexpr uint8_t kRemoteMicNoiseFilterLevel = 2;
 constexpr uint8_t kRemoteMicOverSampling = 4;
+constexpr int32_t kHighPassCoeffQ15 = 30802;
+constexpr int32_t kSoftLimitStart = 14000;
+constexpr int32_t kSoftLimitMax = 22000;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -49,6 +52,8 @@ char displayedStatus[96] = "";
 char lastStatus[96] = "Advertising";
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 uint8_t mulawBuffer[kStickLinkAudioBytesPerChunk] = {};
+int32_t highPassPrevInput = 0;
+int32_t highPassPrevOutput = 0;
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -81,6 +86,9 @@ String deviceInfoJson() {
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
+  doc["speech_high_pass_hz"] = 150;
+  doc["speech_soft_limit_start"] = kSoftLimitStart;
+  doc["speech_soft_limit_max"] = kSoftLimitMax;
 
   String output;
   serializeJson(doc, output);
@@ -188,6 +196,39 @@ void startAdvertising() {
   BLEDevice::startAdvertising();
 }
 
+int16_t conditionSpeechSample(int16_t sample) {
+  const int32_t input = sample;
+  int32_t filtered = input - highPassPrevInput +
+                     ((kHighPassCoeffQ15 * highPassPrevOutput) >> 15);
+  highPassPrevInput = input;
+
+  if (filtered > INT16_MAX) {
+    filtered = INT16_MAX;
+  } else if (filtered < INT16_MIN) {
+    filtered = INT16_MIN;
+  }
+  highPassPrevOutput = filtered;
+
+  const int32_t magnitude = filtered < 0 ? -filtered : filtered;
+  if (magnitude <= kSoftLimitStart) {
+    return static_cast<int16_t>(filtered);
+  }
+
+  int32_t limited =
+      kSoftLimitStart + ((magnitude - kSoftLimitStart) >> 2);
+  if (limited > kSoftLimitMax) {
+    limited = kSoftLimitMax;
+  }
+
+  return static_cast<int16_t>(filtered < 0 ? -limited : limited);
+}
+
+void conditionSpeechChunk(int16_t* samples, size_t sampleCount) {
+  for (size_t i = 0; i < sampleCount; ++i) {
+    samples[i] = conditionSpeechSample(samples[i]);
+  }
+}
+
 uint8_t encodeMuLawSample(int16_t sample) {
   constexpr int kBias = 0x84;
   constexpr int kClip = 32635;
@@ -281,6 +322,7 @@ void remoteMicAppUpdate() {
                     kStickLinkAudioSampleRate)) {
     ++audioChunkCount;
     if (bleConnected && audioCharacteristic != nullptr) {
+      conditionSpeechChunk(audioBuffer, kStickLinkAudioSamplesPerChunk);
       encodeMuLawChunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
                        mulawBuffer);
       audioCharacteristic->setValue(mulawBuffer, sizeof(mulawBuffer));
@@ -302,6 +344,8 @@ void remoteMicAppStartRecording() {
 
   ++sequenceNumber;
   audioChunkCount = 0;
+  highPassPrevInput = 0;
+  highPassPrevOutput = 0;
   lastSendAt = millis();
 
   if (!M5.Mic.isEnabled()) {
