@@ -178,7 +178,8 @@ While Button A is held, Remote Mic records 16 kHz microphone chunks, compresses
 them to 4-bit IMA ADPCM, and streams those chunks live over the audio
 characteristic. Releasing Button A sends a `voice/stop` event. The firmware does
 not keep a fixed-duration recording buffer, so there is no firmware-side
-recording cap while Button A remains held.
+recording cap while Button A remains held. Only the current mic chunk and its
+compressed BLE packet are held in memory briefly.
 
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.

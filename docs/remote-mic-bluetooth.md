@@ -81,7 +81,8 @@ custom BLE service and connects directly through CoreBluetooth.
   16-bit PCM for transcription and saved WAV files.
 - There is no fixed firmware recording-duration cap. Recording continues while
   Button A is held, subject to BLE link quality, battery, and macOS Speech
-  session behavior.
+  session behavior. The StickS3 only holds the current mic chunk and outgoing
+  BLE packet briefly.
 - Saved WAV files are the first debugging artifact for poor recognition:
   inspect whether the decoded received audio itself is intelligible.
 - macOS text output requires Accessibility permission because the app sends a
