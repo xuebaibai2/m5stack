@@ -41,6 +41,10 @@ public struct StatusView: View {
                     Text("Messages").foregroundStyle(.secondary)
                     Text("\(client.deviceInfo.messageCount)")
                 }
+                GridRow {
+                    Text("Audio chunks").foregroundStyle(.secondary)
+                    Text("\(client.deviceInfo.audioChunkCount)")
+                }
             }
             .font(.caption)
 

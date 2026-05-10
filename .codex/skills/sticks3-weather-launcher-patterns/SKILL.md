@@ -1,11 +1,11 @@
 ---
 name: sticks3-weather-launcher-patterns
-description: Use when working on M5Stack StickS3 launcher, weather app, Sensor App BLE messaging, or companion Mac menu bar code in this repo.
+description: Use when working on M5Stack StickS3 launcher, weather app, Remote Mic BLE audio, or companion Mac menu bar code in this repo.
 ---
 
 # StickS3 Weather Launcher Patterns
 
-Use this skill when editing the StickS3 launcher, Weather App, Sensor App BLE
+Use this skill when editing the StickS3 launcher, Weather App, Remote Mic BLE
 messaging, or the companion Mac menu bar app.
 
 ## Config
@@ -27,8 +27,10 @@ messaging, or the companion Mac menu bar app.
 - Button B cycles apps.
 - Button A launches the selected app.
 - In the weather app, short press Button A refreshes data.
-- In the Sensor App, short press Button A sends a BLE event to a connected Mac.
+- In Remote Mic, hold Button A to stream mic audio over BLE.
 - Long press Button A or Button B returns to the menu.
+- In Remote Mic, Button A long press is reserved for push-to-talk, so Button B
+  long press is the menu return path.
 
 ## Weather Fetching
 
@@ -44,19 +46,20 @@ messaging, or the companion Mac menu bar app.
 - Keep text and static widgets outside the animated box.
 - Redraw the smallest possible rectangle when animating moving content.
 
-## Sensor App BLE
+## Remote Mic BLE
 
-- Keep Sensor App firmware in `src/sensor_app.cpp` / `src/sensor_app.h`.
+- Keep Remote Mic firmware in `src/remote_mic_app.cpp` /
+  `src/remote_mic_app.h`.
 - Keep shared BLE protocol constants and JSON encoding in
   `src/stick_link_protocol.h`.
 - StickS3 acts as a BLE peripheral named `StickS3 Link`.
 - Use the custom service and characteristic UUIDs documented in
   `docs/bluetooth-protocol.md`.
-- Send small JSON v1 event envelopes over BLE notifications.
+- Send small JSON v1 control envelopes over the message characteristic.
+- Send raw little-endian 16-bit mono PCM chunks over the audio characteristic.
 - Keep the protocol generic: use `app`, `type`, and `name` fields instead of
   hardcoding Mac behavior to one StickS3 app.
-- Do not use the event characteristic for raw audio; add a separate chunking
-  design for future voice/audio payloads.
+- Keep BLE audio optimized for short push-to-talk utterances.
 
 ## Mac Companion App
 
@@ -64,7 +67,9 @@ messaging, or the companion Mac menu bar app.
 - Keep it movable: do not depend on files outside its folder at runtime.
 - Load runtime config from `mac/StickLinkMenuBar/config/sticklink.json`.
 - Use CoreBluetooth as the central, scan for the configured service UUID, then
-  subscribe to the message characteristic.
+  subscribe to the message and audio characteristics.
+- Use macOS Speech for transcription and Accessibility/clipboard paste for
+  output into the focused text editor.
 - Validate Mac-side protocol/config/log behavior with
   `swift run StickLinkValidation`.
 

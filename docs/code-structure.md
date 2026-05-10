@@ -13,8 +13,8 @@ M5Unified and M5GFX.
 │   └── generate_config.py
 ├── src
 │   ├── main.cpp
-│   ├── sensor_app.cpp
-│   ├── sensor_app.h
+│   ├── remote_mic_app.cpp
+│   ├── remote_mic_app.h
 │   ├── stick_link_protocol.h
 │   ├── weather_app.cpp
 │   ├── weather_app.h
@@ -31,7 +31,7 @@ M5Unified and M5GFX.
 └── docs
     ├── bluetooth-protocol.md
     ├── code-structure.md
-    ├── sensor-app-bluetooth.md
+    ├── remote-mic-bluetooth.md
     └── upload-instructions.md
 ```
 
@@ -86,7 +86,7 @@ App positions are based on the `kApps` array order in `src/main.cpp`:
 ```cpp
 const AppDefinition kApps[] = {
     {"Weather App"},   // first app, index 0
-    {"Sensor App"},    // second app, index 1
+    {"Remote Mic"},    // second app, index 1
     {"Settings App"},  // third app, index 2
 };
 ```
@@ -104,7 +104,7 @@ void drawApp(size_t appIndex) {
   }
 
   if (appIndex == 1) {
-    sensorAppStart();
+    remoteMicAppStart();
     return;
   }
 
@@ -115,10 +115,10 @@ void drawApp(size_t appIndex) {
 So:
 
 - First app: `appIndex == 0`, implemented by `weather_app.cpp`.
-- Second app: `appIndex == 1`, implemented by `sensor_app.cpp`.
+- Second app: `appIndex == 1`, implemented by `remote_mic_app.cpp`.
 - Third app: `appIndex == 2`, currently uses placeholder drawing.
 
-Weather App and Sensor App also have update/input handling in `loop()` and
+Weather App and Remote Mic also have update/input handling in `loop()` and
 `handleAppInput()` by checking `runningApp == 0` or `runningApp == 1`.
 
 To add another app:
@@ -127,46 +127,56 @@ To add another app:
 2. Add a branch in `drawApp()`.
 3. Add update/input handling in `loop()` or a small module like `weather_app`.
 
-## Sensor App
+## Remote Mic
 
-Sensor app public functions are declared in `src/sensor_app.h`.
+Remote Mic public functions are declared in `src/remote_mic_app.h`.
 
 ```cpp
-void sensorAppBegin();
-void sensorAppStart();
-void sensorAppUpdate();
-void sensorAppSendButtonA();
-void sensorAppStop();
-bool sensorAppConnected();
+void remoteMicAppBegin();
+void remoteMicAppStart();
+void remoteMicAppUpdate();
+void remoteMicAppStartRecording();
+void remoteMicAppStopRecording();
+void remoteMicAppStop();
+bool remoteMicAppConnected();
 ```
 
 Responsibilities:
 
-- `sensorAppBegin()`: starts BLE service and advertising during boot.
-- `sensorAppStart()`: enters the Sensor App and draws BLE status.
-- `sensorAppUpdate()`: refreshes the Sensor App status display when needed.
-- `sensorAppSendButtonA()`: sends a BLE JSON event for Button A.
-- `sensorAppStop()`: leaves Sensor App screen state while BLE remains available.
-- `sensorAppConnected()`: exposes BLE connection state for UI/status logic.
+- `remoteMicAppBegin()`: starts BLE service and advertising during boot.
+- `remoteMicAppStart()`: enters Remote Mic and draws BLE/audio status.
+- `remoteMicAppUpdate()`: records mic chunks while Button A is held and refreshes
+  status display when needed.
+- `remoteMicAppStartRecording()`: sends a voice start control event and enables
+  mic recording.
+- `remoteMicAppStopRecording()`: sends a voice stop control event.
+- `remoteMicAppStop()`: leaves Remote Mic screen state while BLE remains
+  available.
+- `remoteMicAppConnected()`: exposes BLE connection state for UI/status logic.
 
 The StickS3 acts as a BLE peripheral named `StickS3 Link`. It advertises the
 custom Stick Link service from `src/stick_link_protocol.h`. The Mac app connects
-as a CoreBluetooth central and subscribes to the message characteristic.
+as a CoreBluetooth central and subscribes to the message and audio
+characteristics.
 
-Current Button A payload:
+Current Button A hold flow:
 
 ```json
 {
   "v": 1,
   "id": "000001",
-  "app": "sensor",
-  "type": "button",
-  "name": "ButtonA",
-  "text": "ButtonA pressed from Sensor App",
+  "app": "remote_mic",
+  "type": "voice",
+  "name": "start",
+  "text": "Remote Mic recording started",
   "ts_ms": 123456,
   "seq": 1
 }
 ```
+
+While Button A is held, Remote Mic sends raw little-endian 16-bit mono PCM audio
+chunks over the audio characteristic. Releasing Button A sends a `voice/stop`
+event.
 
 The BLE protocol, UUIDs, and extension rules are documented in
 `docs/bluetooth-protocol.md`.
@@ -182,15 +192,19 @@ Important constants:
 - `kStickLinkServiceUuid`
 - `kStickLinkMessageCharacteristicUuid`
 - `kStickLinkDeviceInfoCharacteristicUuid`
+- `kStickLinkAudioCharacteristicUuid`
+- `kStickLinkAudioSampleRate`
+- `kStickLinkAudioSamplesPerChunk`
 
 Message helpers:
 
 - `stickLinkEncodeEvent(...)`
 - `stickLinkEncodeButtonEvent(...)`
+- `stickLinkEncodeVoiceEvent(...)`
 
 Keep the protocol generic by using the envelope fields `app`, `type`, and
 `name`. Future voice-trigger or audio metadata events should add new message
-types; raw audio should use a separate characteristic or chunking protocol.
+types. Remote Mic uses a separate audio characteristic for PCM chunks.
 
 ## Weather App
 
@@ -269,10 +283,10 @@ Weather App:
 - Long Button A press: return to menu.
 - Long Button B press: return to menu.
 
-Sensor App:
+Remote Mic:
 
-- Short Button A press: send BLE event to connected Mac.
-- Long Button A press: return to menu.
+- Hold Button A: record StickS3 mic and stream BLE audio chunks.
+- Release Button A: stop recording and request Mac transcription/output.
 - Long Button B press: return to menu.
 
 Other apps:
@@ -293,6 +307,10 @@ Important files:
 - `Sources/StickLinkMenuBar/Models/LogStore.swift`: in-memory log storage.
 - `Sources/StickLinkMenuBar/Bluetooth/StickBluetoothClient.swift`:
   CoreBluetooth central implementation.
+- `Sources/StickLinkMenuBar/Audio/RemoteMicTranscriber.swift`: Speech
+  recognition pipeline for Remote Mic PCM chunks.
+- `Sources/StickLinkMenuBar/Output/TextOutputController.swift`: clipboard and
+  Cmd+V text output into the focused macOS app.
 - `Sources/StickLinkMenuBar/Views/`: SwiftUI status, logs, and config views.
 - `Sources/StickLinkMenuBarApp/main.swift`: menu bar app entry point.
 - `Sources/StickLinkValidation/main.swift`: local validation executable.
@@ -334,9 +352,9 @@ Change Weather App UI:
 - Use full-screen redraw only for state/data changes.
 - Use partial-region redraw for animation.
 
-Change Sensor App BLE event behavior:
+Change Remote Mic BLE/audio behavior:
 
-- Edit `src/sensor_app.cpp`.
+- Edit `src/remote_mic_app.cpp`.
 - Keep JSON envelope construction in `src/stick_link_protocol.h`.
 - Update `docs/bluetooth-protocol.md` if UUIDs or message schema change.
 

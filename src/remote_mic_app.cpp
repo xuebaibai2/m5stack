@@ -1,4 +1,4 @@
-#include "sensor_app.h"
+#include "remote_mic_app.h"
 
 #include <Arduino.h>
 #include <BLE2902.h>
@@ -6,6 +6,7 @@
 #include <BLECharacteristic.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
+#include <cstring>
 #include <M5GFX.h>
 #include <M5Unified.h>
 
@@ -18,17 +19,21 @@ constexpr uint32_t kStatusRedrawMs = 1000;
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
 BLECharacteristic* deviceInfoCharacteristic = nullptr;
+BLECharacteristic* audioCharacteristic = nullptr;
 
 bool bleStarted = false;
 bool bleConnected = false;
 bool appVisible = false;
 bool screenDirty = false;
+bool recording = false;
 uint32_t sequenceNumber = 0;
 uint32_t lastRedrawAt = 0;
 uint32_t lastSendAt = 0;
+uint32_t audioChunkCount = 0;
 char lastStatus[96] = "Advertising";
+int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 
-class SensorServerCallbacks : public BLEServerCallbacks {
+class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
     bleConnected = true;
     snprintf(lastStatus, sizeof(lastStatus), "Mac connected");
@@ -52,13 +57,16 @@ String deviceInfoJson() {
   doc["service"] = kStickLinkServiceUuid;
   doc["message_characteristic"] = kStickLinkMessageCharacteristicUuid;
   doc["device_info_characteristic"] = kStickLinkDeviceInfoCharacteristicUuid;
+  doc["audio_characteristic"] = kStickLinkAudioCharacteristicUuid;
+  doc["audio_sample_rate"] = kStickLinkAudioSampleRate;
+  doc["audio_format"] = "pcm_s16le_mono";
 
   String output;
   serializeJson(doc, output);
   return output;
 }
 
-void drawSensorScreen() {
+void drawRemoteMicScreen() {
   if (!appVisible) {
     return;
   }
@@ -67,7 +75,7 @@ void drawSensorScreen() {
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(8, 8);
-  M5.Display.print("Sensor App");
+  M5.Display.print("Remote Mic");
 
   M5.Display.fillCircle(M5.Display.width() - 18, 16, 5,
                         bleConnected ? TFT_GREEN : TFT_ORANGE);
@@ -89,11 +97,12 @@ void drawSensorScreen() {
 
   M5.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   M5.Display.setCursor(8, 110);
-  M5.Display.printf("A: send  Seq: %lu", static_cast<unsigned long>(sequenceNumber));
+  M5.Display.printf("Hold A: talk  Seq: %lu",
+                    static_cast<unsigned long>(sequenceNumber));
 
   if (lastSendAt > 0) {
     M5.Display.setCursor(8, 124);
-    M5.Display.printf("Last send: %lums", static_cast<unsigned long>(lastSendAt));
+    M5.Display.printf("Chunks: %lu", static_cast<unsigned long>(audioChunkCount));
   }
 
   lastRedrawAt = millis();
@@ -111,7 +120,7 @@ void startAdvertising() {
 
 }  // namespace
 
-void sensorAppBegin() {
+void remoteMicAppBegin() {
   if (bleStarted) {
     return;
   }
@@ -120,7 +129,7 @@ void sensorAppBegin() {
   BLEDevice::setMTU(185);
 
   bleServer = BLEDevice::createServer();
-  bleServer->setCallbacks(new SensorServerCallbacks());
+  bleServer->setCallbacks(new RemoteMicServerCallbacks());
 
   BLEService* service = bleServer->createService(kStickLinkServiceUuid);
 
@@ -135,57 +144,110 @@ void sensorAppBegin() {
   const String info = deviceInfoJson();
   deviceInfoCharacteristic->setValue(info.c_str());
 
+  audioCharacteristic = service->createCharacteristic(
+      kStickLinkAudioCharacteristicUuid, BLECharacteristic::PROPERTY_NOTIFY);
+  audioCharacteristic->addDescriptor(new BLE2902());
+
   service->start();
   startAdvertising();
 
   bleStarted = true;
   snprintf(lastStatus, sizeof(lastStatus), "Advertising");
-  Serial.println("Sensor BLE advertising started");
+  Serial.println("Remote Mic BLE advertising started");
 }
 
-void sensorAppStart() {
+void remoteMicAppStart() {
   appVisible = true;
   screenDirty = true;
-  drawSensorScreen();
+  drawRemoteMicScreen();
 }
 
-void sensorAppUpdate() {
+void remoteMicAppUpdate() {
+  if (recording && M5.Mic.isEnabled() &&
+      M5.Mic.record(audioBuffer, kStickLinkAudioSamplesPerChunk,
+                    kStickLinkAudioSampleRate)) {
+    ++audioChunkCount;
+    if (bleConnected && audioCharacteristic != nullptr) {
+      audioCharacteristic->setValue(
+          reinterpret_cast<uint8_t*>(audioBuffer),
+          kStickLinkAudioSamplesPerChunk * sizeof(int16_t));
+      audioCharacteristic->notify();
+    }
+    screenDirty = true;
+  }
+
   const uint32_t now = millis();
   if (screenDirty || (appVisible && now - lastRedrawAt >= kStatusRedrawMs)) {
-    drawSensorScreen();
+    drawRemoteMicScreen();
   }
 }
 
-void sensorAppSendButtonA() {
+void remoteMicAppStartRecording() {
+  if (recording) {
+    return;
+  }
+
+  ++sequenceNumber;
+  audioChunkCount = 0;
+  lastSendAt = millis();
+
+  if (!M5.Mic.isEnabled()) {
+    M5.Speaker.end();
+    M5.Mic.begin();
+  }
+
+  recording = true;
+  const String payload = stickLinkEncodeVoiceEvent(
+      "start", "Remote Mic recording started", lastSendAt, sequenceNumber);
+
+  if (messageCharacteristic != nullptr) {
+    messageCharacteristic->setValue(payload.c_str());
+    if (bleConnected) {
+      messageCharacteristic->notify();
+    }
+  }
+
+  snprintf(lastStatus, sizeof(lastStatus), bleConnected ? "Recording" : "Recording, no Mac");
+  Serial.println(payload);
+  screenDirty = true;
+  drawRemoteMicScreen();
+}
+
+void remoteMicAppStopRecording() {
+  if (!recording) {
+    return;
+  }
+
+  recording = false;
   ++sequenceNumber;
   lastSendAt = millis();
 
-  const String payload = stickLinkEncodeButtonEvent(
-      "sensor", "ButtonA", "ButtonA pressed from Sensor App", lastSendAt,
-      sequenceNumber);
-
-  Serial.print("Sensor event: ");
-  Serial.println(payload);
-
-  if (messageCharacteristic == nullptr) {
-    snprintf(lastStatus, sizeof(lastStatus), "BLE not ready");
-  } else if (!bleConnected) {
-    snprintf(lastStatus, sizeof(lastStatus), "No Mac connected");
-    messageCharacteristic->setValue(payload.c_str());
-  } else {
-    messageCharacteristic->setValue(payload.c_str());
-    messageCharacteristic->notify();
-    snprintf(lastStatus, sizeof(lastStatus), "Sent ButtonA event");
+  while (M5.Mic.isRecording()) {
+    delay(1);
   }
 
+  const String payload =
+      stickLinkEncodeVoiceEvent("stop", "Remote Mic recording stopped",
+                                lastSendAt, sequenceNumber);
+
+  if (messageCharacteristic != nullptr) {
+    messageCharacteristic->setValue(payload.c_str());
+    if (bleConnected) {
+      messageCharacteristic->notify();
+    }
+  }
+
+  snprintf(lastStatus, sizeof(lastStatus), bleConnected ? "Sent recording" : "No Mac connected");
+  Serial.println(payload);
   screenDirty = true;
-  drawSensorScreen();
+  drawRemoteMicScreen();
 }
 
-void sensorAppStop() {
+void remoteMicAppStop() {
+  remoteMicAppStopRecording();
   appVisible = false;
 }
 
-bool sensorAppConnected() {
+bool remoteMicAppConnected() {
   return bleConnected;
 }

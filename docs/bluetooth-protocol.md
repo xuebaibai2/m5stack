@@ -38,6 +38,23 @@ Properties:
 
 - `read`
 
+Audio characteristic UUID:
+
+```text
+6f7d9f13-2c3b-4e7a-9a1f-1b2c3d4e5f60
+```
+
+Properties:
+
+- `notify`
+
+Audio payload format:
+
+- little-endian signed 16-bit PCM
+- mono
+- 8000 Hz
+- 80 samples per BLE notification by default
+
 ## Message Envelope
 
 Messages are UTF-8 JSON objects. Version 1 messages use this envelope:
@@ -46,10 +63,10 @@ Messages are UTF-8 JSON objects. Version 1 messages use this envelope:
 {
   "v": 1,
   "id": "000001",
-  "app": "sensor",
-  "type": "button",
-  "name": "ButtonA",
-  "text": "ButtonA pressed from Sensor App",
+  "app": "remote_mic",
+  "type": "voice",
+  "name": "start",
+  "text": "Remote Mic recording started",
   "ts_ms": 123456,
   "seq": 1
 }
@@ -66,25 +83,41 @@ Fields:
 - `ts_ms`: device uptime from `millis()`.
 - `seq`: monotonically increasing device-side sequence number.
 
-Consumers must ignore unknown fields. Future audio or large binary payloads
-should use a separate characteristic or an explicit chunking protocol; the
-message characteristic is intended for small events and metadata.
+Consumers must ignore unknown fields. Audio uses the separate audio
+characteristic; the message characteristic is intended for small control events
+and metadata.
 
-## Current Event
+## Remote Mic Events
 
-Inside Sensor App, short Button A sends:
+When Button A is pressed and held in Remote Mic, the StickS3 sends:
 
 ```json
 {
   "v": 1,
   "id": "000001",
-  "app": "sensor",
-  "type": "button",
-  "name": "ButtonA",
-  "text": "ButtonA pressed from Sensor App",
+  "app": "remote_mic",
+  "type": "voice",
+  "name": "start",
+  "text": "Remote Mic recording started",
   "ts_ms": 123456,
   "seq": 1
 }
 ```
 
-The Mac app can filter by `app` and `type` through runtime config.
+While Button A is held, PCM audio chunks are sent over the audio
+characteristic. When Button A is released, the StickS3 sends:
+
+```json
+{
+  "v": 1,
+  "id": "000002",
+  "app": "remote_mic",
+  "type": "voice",
+  "name": "stop",
+  "text": "Remote Mic recording stopped",
+  "ts_ms": 125000,
+  "seq": 2
+}
+```
+
+The Mac app can filter JSON events by `app` and `type` through runtime config.

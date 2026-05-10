@@ -55,6 +55,7 @@ public struct StickDeviceInfo: Equatable {
     public var rssi: Int?
     public var serviceUUID: String = ""
     public var messageCount: Int = 0
+    public var audioChunkCount: Int = 0
     public var rawInfo: String = ""
 }
 
@@ -68,7 +69,9 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
     private var peripheral: CBPeripheral?
     private var messageCharacteristic: CBCharacteristic?
     private var deviceInfoCharacteristic: CBCharacteristic?
+    private var audioCharacteristic: CBCharacteristic?
     private var scanTimer: Timer?
+    public weak var audioReceiver: StickAudioReceiver?
 
     public init(config: StickLinkConfig, logStore: LogStore) {
         self.config = config
@@ -121,6 +124,7 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
         }
         messageCharacteristic = nil
         deviceInfoCharacteristic = nil
+        audioCharacteristic = nil
         state = .disconnected
         logStore.append(.info, "Disconnected")
     }
@@ -225,7 +229,8 @@ extension StickBluetoothClient: CBPeripheralDelegate {
 
         let wanted = [
             CBUUID(string: config.messageCharacteristicUUID),
-            CBUUID(string: config.deviceInfoCharacteristicUUID)
+            CBUUID(string: config.deviceInfoCharacteristicUUID),
+            CBUUID(string: config.audioCharacteristicUUID)
         ]
 
         peripheral.services?.forEach { service in
@@ -247,6 +252,9 @@ extension StickBluetoothClient: CBPeripheralDelegate {
             } else if characteristic.uuid == CBUUID(string: config.deviceInfoCharacteristicUUID) {
                 deviceInfoCharacteristic = characteristic
                 peripheral.readValue(for: characteristic)
+            } else if characteristic.uuid == CBUUID(string: config.audioCharacteristicUUID) {
+                audioCharacteristic = characteristic
+                peripheral.setNotifyValue(true, for: characteristic)
             }
         }
     }
@@ -262,6 +270,8 @@ extension StickBluetoothClient: CBPeripheralDelegate {
             let name = peripheral.name ?? "Stick device"
             state = .subscribed(name)
             logStore.append(.info, "Subscribed to messages")
+        } else if characteristic.uuid == CBUUID(string: config.audioCharacteristicUUID), characteristic.isNotifying {
+            logStore.append(.info, "Subscribed to audio")
         }
     }
 
@@ -284,12 +294,16 @@ extension StickBluetoothClient: CBPeripheralDelegate {
                 }
                 deviceInfo.messageCount += 1
                 logStore.append(message)
+                audioReceiver?.handleControlMessage(message)
             } catch {
                 let raw = String(data: data, encoding: .utf8) ?? "\(data.count) bytes"
                 logStore.append(.error, "Message decode failed: \(raw)")
             }
         } else if characteristic.uuid == CBUUID(string: config.deviceInfoCharacteristicUUID) {
             deviceInfo.rawInfo = String(data: data, encoding: .utf8) ?? "\(data.count) bytes"
+        } else if characteristic.uuid == CBUUID(string: config.audioCharacteristicUUID) {
+            deviceInfo.audioChunkCount += 1
+            audioReceiver?.handleAudioChunk(data)
         }
     }
 }

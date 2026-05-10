@@ -2,7 +2,7 @@
 #include <M5GFX.h>
 #include <M5Unified.h>
 
-#include "sensor_app.h"
+#include "remote_mic_app.h"
 #include "weather_app.h"
 
 namespace {
@@ -20,7 +20,7 @@ struct AppDefinition {
 
 const AppDefinition kApps[] = {
     {"Weather App"},
-    {"Sensor App"},
+    {"Remote Mic"},
     {"Settings App"},
 };
 
@@ -83,7 +83,7 @@ void drawApp(size_t appIndex) {
   }
 
   if (appIndex == 1) {
-    sensorAppStart();
+    remoteMicAppStart();
     return;
   }
 
@@ -102,7 +102,7 @@ void returnToMenu() {
   if (runningApp == 0) {
     weatherAppStop();
   } else if (runningApp == 1) {
-    sensorAppStop();
+    remoteMicAppStop();
   }
 
   currentScreen = Screen::Menu;
@@ -137,6 +137,24 @@ bool consumeLongPress(m5::Button_Class& button, bool& handled) {
 }
 
 void handleAppInput() {
+  if (runningApp == 1) {
+    if (consumeLongPress(M5.BtnB, buttonBHoldHandled)) {
+      remoteMicAppStopRecording();
+      returnToMenu();
+      return;
+    }
+
+    if (M5.BtnA.wasPressed()) {
+      remoteMicAppStartRecording();
+    }
+
+    if (M5.BtnA.wasReleased()) {
+      remoteMicAppStopRecording();
+    }
+
+    return;
+  }
+
   if (consumeLongPress(M5.BtnA, buttonAHoldHandled) ||
       consumeLongPress(M5.BtnB, buttonBHoldHandled)) {
     returnToMenu();
@@ -145,8 +163,6 @@ void handleAppInput() {
 
   if (runningApp == 0 && M5.BtnA.wasClicked()) {
     weatherAppRefresh();
-  } else if (runningApp == 1 && M5.BtnA.wasClicked()) {
-    sensorAppSendButtonA();
   }
 }
 
@@ -161,7 +177,7 @@ void setup() {
   M5.Display.setRotation(1);
   M5.Display.setTextWrap(false);
   weatherAppBegin();
-  sensorAppBegin();
+  remoteMicAppBegin();
   drawMenu();
 }
 
@@ -177,7 +193,7 @@ void loop() {
       if (runningApp == 0) {
         weatherAppUpdate();
       } else if (runningApp == 1) {
-        sensorAppUpdate();
+        remoteMicAppUpdate();
       }
       break;
   }

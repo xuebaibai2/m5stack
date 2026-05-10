@@ -23,10 +23,10 @@ func validateMessageDecoding() throws {
     {
       "v": 1,
       "id": "000007",
-      "app": "sensor",
-      "type": "button",
-      "name": "ButtonA",
-      "text": "ButtonA pressed from Sensor App",
+      "app": "remote_mic",
+      "type": "voice",
+      "name": "start",
+      "text": "Remote Mic recording started",
       "ts_ms": 123456,
       "seq": 7,
       "future": "ignored"
@@ -36,10 +36,10 @@ func validateMessageDecoding() throws {
     let message = try JSONDecoder().decode(StickMessage.self, from: data)
     try expect(message.version == 1, "message version decoded")
     try expect(message.id == "000007", "message id decoded")
-    try expect(message.app == "sensor", "message app decoded")
-    try expect(message.type == "button", "message type decoded")
-    try expect(message.name == "ButtonA", "message name decoded")
-    try expect(message.text == "ButtonA pressed from Sensor App", "message text decoded")
+    try expect(message.app == "remote_mic", "message app decoded")
+    try expect(message.type == "voice", "message type decoded")
+    try expect(message.name == "start", "message name decoded")
+    try expect(message.text == "Remote Mic recording started", "message text decoded")
     try expect(message.timestampMilliseconds == 123456, "message timestamp decoded")
     try expect(message.sequence == 7, "message sequence decoded")
 }
@@ -49,6 +49,8 @@ func validateConfigLoading() throws {
     try expect(defaultConfig.serviceUUID == "6f7d9f10-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default service UUID")
     try expect(defaultConfig.messageCharacteristicUUID == "6f7d9f11-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default message characteristic UUID")
     try expect(defaultConfig.deviceInfoCharacteristicUUID == "6f7d9f12-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default info characteristic UUID")
+    try expect(defaultConfig.audioCharacteristicUUID == "6f7d9f13-2c3b-4e7a-9a1f-1b2c3d4e5f60", "default audio characteristic UUID")
+    try expect(defaultConfig.audioSampleRate == 8000, "default audio sample rate")
 
     let data = """
     {
@@ -56,7 +58,10 @@ func validateConfigLoading() throws {
       "allowedApps": ["sensor", "voice"],
       "allowedMessageTypes": ["button"],
       "scanTimeoutSeconds": 12,
-      "maxRetainedLogs": 3
+      "maxRetainedLogs": 3,
+      "audioSampleRate": 16000,
+      "transcriptionLocaleIdentifier": "en-AU",
+      "pasteTranscriptsToFocusedApp": false
     }
     """.data(using: .utf8)!
 
@@ -67,6 +72,9 @@ func validateConfigLoading() throws {
     try expect(loaded.allowedMessageTypes == ["button"], "partial config overrides message types")
     try expect(loaded.scanTimeoutSeconds == 12, "partial config overrides scan timeout")
     try expect(loaded.maxRetainedLogs == 3, "partial config overrides log retention")
+    try expect(loaded.audioSampleRate == 16000, "partial config overrides sample rate")
+    try expect(loaded.transcriptionLocaleIdentifier == "en-AU", "partial config overrides locale")
+    try expect(loaded.pasteTranscriptsToFocusedApp == false, "partial config overrides output behavior")
 }
 
 func validateLogStore() throws {
@@ -79,16 +87,16 @@ func validateLogStore() throws {
     let message = StickMessage(
         version: 1,
         id: "000001",
-        app: "sensor",
-        type: "button",
-        name: "ButtonA",
-        text: "ButtonA pressed from Sensor App",
+        app: "remote_mic",
+        type: "voice",
+        name: "stop",
+        text: "Remote Mic recording stopped",
         timestampMilliseconds: 42,
         sequence: 1
     )
 
     store.append(message)
-    try expect(store.entries.last?.message == "sensor/button ButtonA: ButtonA pressed from Sensor App", "log store formats Stick messages")
+    try expect(store.entries.last?.message == "remote_mic/voice stop: Remote Mic recording stopped", "log store formats Stick messages")
 }
 
 do {

@@ -36,6 +36,18 @@ public struct ConfigView: View {
                     Text("Log limit").foregroundStyle(.secondary)
                     Text("\(config.maxRetainedLogs)")
                 }
+                GridRow {
+                    Text("Audio").foregroundStyle(.secondary)
+                    Text("\(Int(config.audioSampleRate)) Hz PCM")
+                }
+                GridRow {
+                    Text("Speech").foregroundStyle(.secondary)
+                    Text(config.transcriptionLocaleIdentifier)
+                }
+                GridRow {
+                    Text("Output").foregroundStyle(.secondary)
+                    Text(config.pasteTranscriptsToFocusedApp ? "Paste to focused app" : "Log only")
+                }
             }
             .font(.caption)
 

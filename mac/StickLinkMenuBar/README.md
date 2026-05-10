@@ -1,6 +1,7 @@
 # StickLinkMenuBar
 
-Native SwiftUI macOS menu bar app for receiving StickS3 BLE events.
+Native SwiftUI macOS menu bar app for receiving StickS3 BLE events and Remote
+Mic audio.
 
 ## Run Locally
 
@@ -59,11 +60,15 @@ Default config:
   "serviceUUID": "6f7d9f10-2c3b-4e7a-9a1f-1b2c3d4e5f60",
   "messageCharacteristicUUID": "6f7d9f11-2c3b-4e7a-9a1f-1b2c3d4e5f60",
   "deviceInfoCharacteristicUUID": "6f7d9f12-2c3b-4e7a-9a1f-1b2c3d4e5f60",
+  "audioCharacteristicUUID": "6f7d9f13-2c3b-4e7a-9a1f-1b2c3d4e5f60",
   "deviceNamePrefix": "StickS3",
   "allowedApps": [],
   "allowedMessageTypes": [],
   "scanTimeoutSeconds": 10,
-  "maxRetainedLogs": 200
+  "maxRetainedLogs": 200,
+  "audioSampleRate": 8000,
+  "transcriptionLocaleIdentifier": "en-US",
+  "pasteTranscriptsToFocusedApp": true
 }
 ```
 
@@ -75,22 +80,29 @@ Empty `allowedApps` and `allowedMessageTypes` means accept all values. Use the
 1. Build and upload the firmware from the repository root with `pio run` and
    `pio run -t upload --upload-port <port>`.
 2. Launch this Mac app with `swift run StickLinkMenuBar`.
-3. Grant Bluetooth permission if macOS prompts.
+3. Grant Bluetooth, Speech Recognition, and Accessibility permissions if macOS
+   prompts.
 4. Click `Scan`.
 5. Wait for the state to become `Subscribed`.
-6. Open Sensor App on the StickS3.
-7. Press Button A.
+6. Open Remote Mic on the StickS3.
+7. Click into any text editor.
+8. Hold Button A, speak into the StickS3, then release Button A.
 
-Expected log:
+Expected log/output:
 
 ```text
-sensor/button ButtonA: ButtonA pressed from Sensor App
+Transcript: <recognized speech>
 ```
+
+If `pasteTranscriptsToFocusedApp` is `true`, the transcript is copied to the
+clipboard and pasted into the focused editor with Cmd+V.
 
 ## Notes
 
 - The app connects through CoreBluetooth; no manual macOS pairing is required.
 - Bluetooth scans require macOS Bluetooth permission.
+- Speech transcription requires macOS Speech Recognition permission.
+- Pasting into another app requires Accessibility permission.
 - The current log store is in memory and resets when the app exits.
 - The protocol is generic: future StickS3 apps can send different `app` and
   `type` values without Mac app code changes.

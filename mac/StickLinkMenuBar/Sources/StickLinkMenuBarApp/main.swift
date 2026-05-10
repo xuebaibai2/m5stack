@@ -21,6 +21,7 @@ final class StickLinkAppModel: ObservableObject {
     let configURL: URL
     let logStore: LogStore
     let client: StickBluetoothClient
+    let transcriber: RemoteMicTranscriber
 
     init(configURL: URL = StickLinkConfig.defaultConfigURL()) {
         self.configURL = configURL
@@ -33,7 +34,14 @@ final class StickLinkAppModel: ObservableObject {
 
         self.config = loadedConfig
         self.logStore = LogStore(maxCount: loadedConfig.maxRetainedLogs)
+        let outputController = TextOutputController(logStore: logStore)
+        self.transcriber = RemoteMicTranscriber(
+            config: loadedConfig,
+            logStore: logStore,
+            outputController: outputController
+        )
         self.client = StickBluetoothClient(config: loadedConfig, logStore: logStore)
+        self.client.audioReceiver = transcriber
 
         if FileManager.default.fileExists(atPath: configURL.path) {
             logStore.append(.info, "Loaded config \(configURL.path)")
@@ -47,9 +55,11 @@ final class StickLinkAppModel: ObservableObject {
             let loaded = try StickLinkConfig.load(from: configURL)
             config = loaded
             client.updateConfig(loaded)
+            transcriber.updateConfig(loaded)
         } catch {
             config = .default
             client.updateConfig(.default)
+            transcriber.updateConfig(.default)
             logStore.append(.error, "Config load failed: \(error.localizedDescription)")
         }
     }
@@ -70,6 +80,8 @@ struct StickLinkRootView: View {
 
             LogsView(logStore: model.logStore)
 
+            TranscriptView(transcriber: model.transcriber)
+
             Divider()
 
             ConfigView(
@@ -87,5 +99,22 @@ struct StickLinkRootView: View {
             }
         }
         .padding(16)
+    }
+}
+
+struct TranscriptView: View {
+    @ObservedObject var transcriber: RemoteMicTranscriber
+
+    var body: some View {
+        if !transcriber.latestTranscript.isEmpty || transcriber.isRecording {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(transcriber.isRecording ? "Listening" : "Last Transcript")
+                    .font(.headline)
+                Text(transcriber.latestTranscript.isEmpty ? "Waiting for speech..." : transcriber.latestTranscript)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 }

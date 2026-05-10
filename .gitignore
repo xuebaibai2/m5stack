@@ -7,3 +7,4 @@ src/generated_config.h
 .vscode/launch.json
 .vscode/ipch
 mac/StickLinkMenuBar/.build/
+secret/
