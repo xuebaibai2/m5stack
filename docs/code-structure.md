@@ -15,6 +15,8 @@ M5Unified and M5GFX.
 │   ├── main.cpp
 │   ├── remote_mic_app.cpp
 │   ├── remote_mic_app.h
+│   ├── status_bar.cpp
+│   ├── status_bar.h
 │   ├── stick_link_protocol.h
 │   ├── weather_app.cpp
 │   ├── weather_app.h
@@ -78,6 +80,8 @@ Important sections:
 - `drawMenu()`: menu screen drawing.
 - `handleMenuInput()`: Button B cycles apps, Button A launches.
 - `handleAppInput()`: long press A or B returns to menu.
+- `statusBarDraw()` / `statusBarUpdate()`: shared Wi-Fi, BLE, and battery
+  status strip.
 - `setup()`: initializes Serial, M5, display, starts Wi-Fi, then draws menu.
 - `loop()`: calls `M5.update()` and routes input/update logic by screen state.
 
@@ -120,6 +124,11 @@ So:
 
 Weather App and Remote Mic also have update/input handling in `loop()` and
 `handleAppInput()` by checking `runningApp == 0` or `runningApp == 1`.
+
+The shared status bar is implemented in `src/status_bar.cpp`. It shows Wi-Fi
+state, BLE connection state, and `M5.Power.getBatteryLevel()` as a percentage.
+It is drawn in the launcher and Weather App headers and refreshed with partial
+region redraws instead of clearing the full screen.
 
 To add another app:
 

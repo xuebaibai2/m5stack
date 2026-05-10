@@ -9,6 +9,7 @@
 #include <WiFiClientSecure.h>
 
 #include "generated_config.h"
+#include "status_bar.h"
 
 namespace {
 
@@ -73,23 +74,14 @@ void ensureWifiStarted() {
   Serial.println("WiFi connection started");
 }
 
-void drawWifiIndicator() {
-  const bool connected = WiFi.status() == WL_CONNECTED;
-  const int x = M5.Display.width() - 48;
-  M5.Display.fillCircle(x, 12, 4, connected ? TFT_GREEN : TFT_DARKGREY);
-  M5.Display.setTextSize(1);
-  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5.Display.setCursor(x + 8, 8);
-  M5.Display.print("WiFi");
-}
-
 void drawWeatherShell() {
   M5.Display.clear(TFT_BLACK);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(8, 8);
   M5.Display.print("Sydney");
-  drawWifiIndicator();
+  statusBarReset();
+  statusBarDraw();
 }
 
 void drawSunIcon(int cx, int cy, uint8_t frame) {
@@ -373,6 +365,7 @@ void weatherAppStart() {
 
 void weatherAppUpdate() {
   const uint32_t now = millis();
+  statusBarUpdate();
 
   switch (weatherState) {
     case WeatherState::Connecting:

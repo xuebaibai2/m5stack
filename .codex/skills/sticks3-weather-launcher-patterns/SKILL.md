@@ -19,11 +19,13 @@ messaging, or the companion Mac menu bar app.
 
 - Start Wi-Fi as early as possible after `M5.begin()`.
 - Do not break the app if Wi-Fi is unavailable.
-- Show a visible Wi-Fi connected indicator when connected.
+- Show visible Wi-Fi, BLE, and battery indicators through the shared status bar.
 
 ## App Behavior
 
 - Launcher menu uses larger, readable option text.
+- Launcher and Weather App headers use `src/status_bar.cpp` for Wi-Fi, BLE, and
+  battery percentage.
 - Button B cycles apps.
 - Button A launches the selected app.
 - In the weather app, short press Button A refreshes data.

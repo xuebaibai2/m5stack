@@ -3,6 +3,7 @@
 #include <M5Unified.h>
 
 #include "remote_mic_app.h"
+#include "status_bar.h"
 #include "weather_app.h"
 
 namespace {
@@ -32,23 +33,14 @@ size_t runningApp = 0;
 bool buttonAHoldHandled = false;
 bool buttonBHoldHandled = false;
 
-void drawWifiIndicator() {
-  const bool connected = weatherAppWifiConnected();
-  const int x = M5.Display.width() - 48;
-  M5.Display.fillCircle(x, 12, 4, connected ? TFT_GREEN : TFT_DARKGREY);
-  M5.Display.setTextSize(1);
-  M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5.Display.setCursor(x + 8, 8);
-  M5.Display.print("WiFi");
-}
-
 void drawMenu() {
   M5.Display.clear(TFT_BLACK);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(8, 8);
   M5.Display.println("App Launcher");
-  drawWifiIndicator();
+  statusBarReset();
+  statusBarDraw();
 
   M5.Display.setTextSize(1);
   M5.Display.setCursor(8, 32);
@@ -187,6 +179,9 @@ void loop() {
   switch (currentScreen) {
     case Screen::Menu:
       handleMenuInput();
+      if (currentScreen == Screen::Menu) {
+        statusBarUpdate();
+      }
       break;
     case Screen::App:
       handleAppInput();
