@@ -77,7 +77,8 @@ custom BLE service and connects directly through CoreBluetooth.
 
 - BLE audio and macOS Speech delivery require real hardware and were not
   automated here.
-- Audio uses 8 kHz mono packed 12-bit unsigned PCM over BLE. The Mac app decodes it to
+- Audio capture runs at 16 kHz on the StickS3, then firmware downsamples to an
+  8 kHz mono packed 12-bit unsigned PCM BLE stream. The Mac app decodes it to
   16-bit PCM for transcription and saved WAV files.
 - The stream uses 150-byte BLE notifications, representing 12.5 ms of speech at
   8 kHz. This keeps packet size safely under the BLE MTU while reducing the

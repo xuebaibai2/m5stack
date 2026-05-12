@@ -25,6 +25,9 @@ constexpr int kChunkValueX = 8;
 constexpr int kChunkValueY = 124;
 constexpr int kChunkValueW = 216;
 constexpr int kChunkValueH = 14;
+constexpr uint32_t kRemoteMicCaptureSampleRate = 16000;
+constexpr size_t kRemoteMicCaptureSamplesPerChunk =
+    kStickLinkAudioSamplesPerChunk * 2;
 constexpr uint8_t kRemoteMicMagnification = 8;
 constexpr uint8_t kRemoteMicNoiseFilterLevel = 0;
 constexpr uint8_t kRemoteMicOverSampling = 4;
@@ -47,6 +50,7 @@ uint32_t displayedAudioChunkCount = UINT32_MAX;
 bool displayedBleConnected = false;
 char displayedStatus[96] = "";
 char lastStatus[96] = "Advertising";
+int16_t captureBuffer[kRemoteMicCaptureSamplesPerChunk] = {};
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 uint8_t pcm12Buffer[kStickLinkAudioBytesPerChunk] = {};
 
@@ -78,6 +82,7 @@ String deviceInfoJson() {
   doc["audio_sample_rate"] = kStickLinkAudioSampleRate;
   doc["audio_format"] = "pcm_u12le_packed_mono";
   doc["audio_mode"] = "live_compressed_stream";
+  doc["mic_capture_sample_rate"] = kRemoteMicCaptureSampleRate;
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
@@ -188,6 +193,15 @@ void startAdvertising() {
   BLEDevice::startAdvertising();
 }
 
+void downsampleCaptureChunk(const int16_t* input, int16_t* output,
+                            size_t outputCount) {
+  for (size_t i = 0; i < outputCount; ++i) {
+    const int32_t first = input[i * 2];
+    const int32_t second = input[i * 2 + 1];
+    output[i] = static_cast<int16_t>((first + second) / 2);
+  }
+}
+
 uint16_t encodePcm12Sample(int16_t sample) {
   return static_cast<uint16_t>((static_cast<int32_t>(sample) + 32768) >> 4);
 }
@@ -206,7 +220,7 @@ void encodePcm12Chunk(const int16_t* samples, size_t sampleCount, uint8_t* out) 
 
 void configureRemoteMicInput() {
   auto cfg = M5.Mic.config();
-  cfg.sample_rate = kStickLinkAudioSampleRate;
+  cfg.sample_rate = kRemoteMicCaptureSampleRate;
   cfg.magnification = kRemoteMicMagnification;
   cfg.noise_filter_level = kRemoteMicNoiseFilterLevel;
   cfg.over_sampling = kRemoteMicOverSampling;
@@ -259,10 +273,12 @@ void remoteMicAppStart() {
 
 void remoteMicAppUpdate() {
   if (recording && M5.Mic.isEnabled() &&
-      M5.Mic.record(audioBuffer, kStickLinkAudioSamplesPerChunk,
-                    kStickLinkAudioSampleRate)) {
+      M5.Mic.record(captureBuffer, kRemoteMicCaptureSamplesPerChunk,
+                    kRemoteMicCaptureSampleRate)) {
     ++audioChunkCount;
     if (bleConnected && audioCharacteristic != nullptr) {
+      downsampleCaptureChunk(captureBuffer, audioBuffer,
+                             kStickLinkAudioSamplesPerChunk);
       encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
                        pcm12Buffer);
       audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));

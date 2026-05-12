@@ -183,15 +183,17 @@ Current Button A hold flow:
 }
 ```
 
-While Button A is held, Remote Mic records 8 kHz microphone chunks, packs
-them as 12-bit unsigned PCM, and streams those chunks live over the audio
-characteristic. Releasing Button A sends a `voice/stop` event. The firmware does
-not keep a fixed-duration recording buffer, so there is no firmware-side
-recording cap while Button A remains held. Only the current mic chunk and its
-compressed BLE packet are held in memory briefly.
+While Button A is held, Remote Mic captures microphone chunks at 16 kHz,
+downsamples them to 8 kHz by averaging adjacent samples, packs them as 12-bit
+unsigned PCM, and streams those chunks live over the audio characteristic.
+Releasing Button A sends a `voice/stop` event. The firmware does not keep a
+fixed-duration recording buffer, so there is no firmware-side recording cap
+while Button A remains held. Only the current mic chunk and its compressed BLE
+packet are held in memory briefly.
 
-Remote Mic configures M5Unified mic capture with reduced input magnification and
-higher oversampling before `M5.Mic.begin()`. It avoids aggressive filtering and
+Remote Mic configures M5Unified mic capture at 16 kHz with reduced input
+magnification and higher oversampling before `M5.Mic.begin()`. The BLE stream
+remains 8 kHz to keep packet pressure low. It avoids aggressive filtering and
 speech companding so saved WAV files preserve the actual mic waveform.
 
 Each audio notification contains 100 PCM12 samples packed into 150 bytes, which

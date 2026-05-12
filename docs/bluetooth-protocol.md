@@ -60,6 +60,9 @@ Audio payload format:
 The Mac app decodes the PCM12 stream to little-endian signed 16-bit PCM before
 feeding macOS Speech or writing WAV recordings.
 
+Remote Mic captures from the StickS3 microphone at 16 kHz and downsamples to
+the 8 kHz BLE stream rate before packing the audio payload.
+
 ## Message Envelope
 
 Messages are UTF-8 JSON objects. Version 1 messages use this envelope:

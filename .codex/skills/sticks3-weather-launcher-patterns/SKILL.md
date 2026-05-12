@@ -62,6 +62,9 @@ messaging, or the companion Mac menu bar app.
   decodes them back to little-endian 16-bit mono PCM for Speech and WAV files.
 - Keep Remote Mic at 8 kHz / 100 samples per notification so BLE sends 150-byte
   chunks below the negotiated MTU.
+- Capture the StickS3 mic at 16 kHz and downsample to the 8 kHz BLE stream;
+  avoid configuring the hardware mic path directly at low rates when quality is
+  poor.
 - Configure M5Unified mic gain/filtering before capture; avoid amplifying the
   StickS3 mic floor before speech compression.
 - For Remote Mic speech quality, prefer the simplest possible capture path
