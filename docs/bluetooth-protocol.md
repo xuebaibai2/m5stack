@@ -61,7 +61,10 @@ The Mac app decodes the PCM12 stream to little-endian signed 16-bit PCM before
 feeding macOS Speech or writing WAV recordings.
 
 Remote Mic captures from the StickS3 microphone at 16 kHz and downsamples to
-the 8 kHz BLE stream rate before packing the audio payload.
+the 8 kHz BLE stream rate before packing the audio payload. Firmware-side
+automatic level control keeps normal speech below clipping before PCM12 packing;
+current gain and limiter targets are reported through the device-info JSON when
+available.
 
 ## Message Envelope
 

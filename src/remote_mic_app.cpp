@@ -28,11 +28,16 @@ constexpr int kChunkValueH = 14;
 constexpr uint32_t kRemoteMicCaptureSampleRate = 16000;
 constexpr size_t kRemoteMicCaptureSamplesPerChunk =
     kStickLinkAudioSamplesPerChunk * 2;
-constexpr uint8_t kRemoteMicMagnification = 2;
+constexpr uint8_t kRemoteMicMagnification = 1;
 constexpr uint8_t kRemoteMicNoiseFilterLevel = 0;
 constexpr uint8_t kRemoteMicOverSampling = 4;
-constexpr int32_t kRemoteMicSoftLimitStart = 22000;
-constexpr int32_t kRemoteMicSoftLimitMax = 28000;
+constexpr int32_t kAgcTargetPeak = 12000;
+constexpr int32_t kAgcSoftLimitStart = 18000;
+constexpr int32_t kAgcSoftLimitMax = 24000;
+constexpr int32_t kAgcMinGainQ15 = 16384;
+constexpr int32_t kAgcMaxGainQ15 = 65536;
+constexpr int32_t kAgcAttackStepQ15 = 4096;
+constexpr int32_t kAgcReleaseStepQ15 = 256;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -55,6 +60,7 @@ char lastStatus[96] = "Advertising";
 int16_t captureBuffer[kRemoteMicCaptureSamplesPerChunk] = {};
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 uint8_t pcm12Buffer[kStickLinkAudioBytesPerChunk] = {};
+int32_t agcGainQ15 = 32768;
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -88,8 +94,9 @@ String deviceInfoJson() {
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
-  doc["speech_soft_limit_start"] = kRemoteMicSoftLimitStart;
-  doc["speech_soft_limit_max"] = kRemoteMicSoftLimitMax;
+  doc["agc_target_peak"] = kAgcTargetPeak;
+  doc["agc_soft_limit_start"] = kAgcSoftLimitStart;
+  doc["agc_soft_limit_max"] = kAgcSoftLimitMax;
 
   String output;
   serializeJson(doc, output);
@@ -206,24 +213,61 @@ void downsampleCaptureChunk(const int16_t* input, int16_t* output,
   }
 }
 
-int16_t softLimitSample(int16_t sample) {
-  const int32_t magnitude = sample < 0 ? -static_cast<int32_t>(sample) : sample;
-  if (magnitude <= kRemoteMicSoftLimitStart) {
-    return sample;
+int32_t chunkPeak(const int16_t* samples, size_t sampleCount) {
+  int32_t peak = 0;
+  for (size_t i = 0; i < sampleCount; ++i) {
+    const int32_t value = samples[i];
+    const int32_t magnitude = value < 0 ? -value : value;
+    if (magnitude > peak) {
+      peak = magnitude;
+    }
+  }
+  return peak;
+}
+
+void updateAgcGain(int32_t peak) {
+  if (peak <= 0) {
+    return;
+  }
+
+  const int32_t targetGainQ15 =
+      constrain((kAgcTargetPeak << 15) / peak, kAgcMinGainQ15,
+                kAgcMaxGainQ15);
+
+  if (targetGainQ15 < agcGainQ15) {
+    agcGainQ15 -= min(kAgcAttackStepQ15, agcGainQ15 - targetGainQ15);
+  } else if (targetGainQ15 > agcGainQ15) {
+    agcGainQ15 += min(kAgcReleaseStepQ15, targetGainQ15 - agcGainQ15);
+  }
+}
+
+int16_t applyAgcAndLimit(int16_t sample) {
+  int32_t scaled = (static_cast<int32_t>(sample) * agcGainQ15) >> 15;
+  if (scaled > INT16_MAX) {
+    scaled = INT16_MAX;
+  } else if (scaled < INT16_MIN) {
+    scaled = INT16_MIN;
+  }
+
+  const int32_t sampleValue = scaled;
+  const int32_t magnitude = sampleValue < 0 ? -sampleValue : sampleValue;
+  if (magnitude <= kAgcSoftLimitStart) {
+    return static_cast<int16_t>(sampleValue);
   }
 
   int32_t limited =
-      kRemoteMicSoftLimitStart + ((magnitude - kRemoteMicSoftLimitStart) >> 2);
-  if (limited > kRemoteMicSoftLimitMax) {
-    limited = kRemoteMicSoftLimitMax;
+      kAgcSoftLimitStart + ((magnitude - kAgcSoftLimitStart) >> 2);
+  if (limited > kAgcSoftLimitMax) {
+    limited = kAgcSoftLimitMax;
   }
 
-  return static_cast<int16_t>(sample < 0 ? -limited : limited);
+  return static_cast<int16_t>(sampleValue < 0 ? -limited : limited);
 }
 
-void limitSpeechChunk(int16_t* samples, size_t sampleCount) {
+void applyAutomaticLevelControl(int16_t* samples, size_t sampleCount) {
+  updateAgcGain(chunkPeak(samples, sampleCount));
   for (size_t i = 0; i < sampleCount; ++i) {
-    samples[i] = softLimitSample(samples[i]);
+    samples[i] = applyAgcAndLimit(samples[i]);
   }
 }
 
@@ -304,7 +348,7 @@ void remoteMicAppUpdate() {
     if (bleConnected && audioCharacteristic != nullptr) {
       downsampleCaptureChunk(captureBuffer, audioBuffer,
                              kStickLinkAudioSamplesPerChunk);
-      limitSpeechChunk(audioBuffer, kStickLinkAudioSamplesPerChunk);
+      applyAutomaticLevelControl(audioBuffer, kStickLinkAudioSamplesPerChunk);
       encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
                        pcm12Buffer);
       audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));
@@ -326,6 +370,7 @@ void remoteMicAppStartRecording() {
 
   ++sequenceNumber;
   audioChunkCount = 0;
+  agcGainQ15 = 32768;
   lastSendAt = millis();
 
   if (!M5.Mic.isEnabled()) {

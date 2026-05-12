@@ -67,6 +67,8 @@ messaging, or the companion Mac menu bar app.
   poor.
 - Configure M5Unified mic gain/filtering before capture; keep gain low enough
   that speech WAVs do not hit full scale.
+- Use automatic level control for Remote Mic: fast attenuation for loud speech,
+  slow recovery for quiet speech, and final soft limiting before PCM packing.
 - For Remote Mic speech quality, prefer the simplest possible capture path
   before adding filters or speech codecs that can sound robotic.
 - Keep the protocol generic: use `app`, `type`, and `name` fields instead of
