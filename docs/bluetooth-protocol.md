@@ -62,9 +62,9 @@ feeding macOS Speech or writing WAV recordings.
 
 Remote Mic captures from the StickS3 microphone at 16 kHz and downsamples to
 the 8 kHz BLE stream rate before packing the audio payload. Firmware-side
-automatic level control keeps normal speech below clipping before PCM12 packing;
-current gain and limiter targets are reported through the device-info JSON when
-available.
+codec gain control and automatic level control keep normal speech below clipping
+before PCM12 packing; current codec volume, gain, and limiter targets are
+reported through the device-info JSON when available.
 
 ## Message Envelope
 

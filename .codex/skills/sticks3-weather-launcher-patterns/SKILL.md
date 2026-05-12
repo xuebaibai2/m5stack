@@ -67,6 +67,9 @@ messaging, or the companion Mac menu bar app.
   poor.
 - Configure M5Unified mic gain/filtering before capture; keep gain low enough
   that speech WAVs do not hit full scale.
+- On StickS3, override the ES8311 codec ADC volume after `M5.Mic.begin()` so
+  M5Unified's codec max-gain default does not clip normal speech before the app
+  receives samples.
 - Use automatic level control for Remote Mic: fast attenuation for loud speech,
   slow recovery for quiet speech, and final soft limiting before PCM packing.
 - For Remote Mic speech quality, prefer the simplest possible capture path

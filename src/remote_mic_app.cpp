@@ -10,6 +10,7 @@
 #include <M5GFX.h>
 #include <M5Unified.h>
 
+#include "remote_mic_audio_config.h"
 #include "stick_link_protocol.h"
 
 namespace {
@@ -94,6 +95,8 @@ String deviceInfoJson() {
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
+  doc["codec_adc_volume_register"] = remoteMicCodecAdcVolumeRegister();
+  doc["codec_adc_volume"] = remoteMicCodecAdcVolumeValue();
   doc["agc_target_peak"] = kAgcTargetPeak;
   doc["agc_soft_limit_start"] = kAgcSoftLimitStart;
   doc["agc_soft_limit_max"] = kAgcSoftLimitMax;
@@ -296,6 +299,16 @@ void configureRemoteMicInput() {
   M5.Mic.config(cfg);
 }
 
+bool applyRemoteMicCodecInputLevel() {
+  const bool ok = M5.In_I2C.writeRegister8(
+      remoteMicCodecI2cAddress(), remoteMicCodecAdcVolumeRegister(),
+      remoteMicCodecAdcVolumeValue(), remoteMicCodecI2cFrequency());
+  if (!ok) {
+    Serial.println("Remote Mic codec ADC volume write failed");
+  }
+  return ok;
+}
+
 }  // namespace
 
 void remoteMicAppBegin() {
@@ -378,6 +391,7 @@ void remoteMicAppStartRecording() {
     configureRemoteMicInput();
     M5.Mic.begin();
   }
+  applyRemoteMicCodecInputLevel();
 
   recording = true;
   const String payload = stickLinkEncodeVoiceEvent(
