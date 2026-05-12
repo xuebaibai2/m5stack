@@ -65,8 +65,8 @@ messaging, or the companion Mac menu bar app.
 - Capture the StickS3 mic at 16 kHz and downsample to the 8 kHz BLE stream;
   avoid configuring the hardware mic path directly at low rates when quality is
   poor.
-- Configure M5Unified mic gain/filtering before capture; avoid amplifying the
-  StickS3 mic floor before speech compression.
+- Configure M5Unified mic gain/filtering before capture; keep gain low enough
+  that speech WAVs do not hit full scale.
 - For Remote Mic speech quality, prefer the simplest possible capture path
   before adding filters or speech codecs that can sound robotic.
 - Keep the protocol generic: use `app`, `type`, and `name` fields instead of

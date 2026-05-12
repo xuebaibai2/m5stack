@@ -28,9 +28,11 @@ constexpr int kChunkValueH = 14;
 constexpr uint32_t kRemoteMicCaptureSampleRate = 16000;
 constexpr size_t kRemoteMicCaptureSamplesPerChunk =
     kStickLinkAudioSamplesPerChunk * 2;
-constexpr uint8_t kRemoteMicMagnification = 8;
+constexpr uint8_t kRemoteMicMagnification = 2;
 constexpr uint8_t kRemoteMicNoiseFilterLevel = 0;
 constexpr uint8_t kRemoteMicOverSampling = 4;
+constexpr int32_t kRemoteMicSoftLimitStart = 22000;
+constexpr int32_t kRemoteMicSoftLimitMax = 28000;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -86,6 +88,8 @@ String deviceInfoJson() {
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
+  doc["speech_soft_limit_start"] = kRemoteMicSoftLimitStart;
+  doc["speech_soft_limit_max"] = kRemoteMicSoftLimitMax;
 
   String output;
   serializeJson(doc, output);
@@ -202,6 +206,27 @@ void downsampleCaptureChunk(const int16_t* input, int16_t* output,
   }
 }
 
+int16_t softLimitSample(int16_t sample) {
+  const int32_t magnitude = sample < 0 ? -static_cast<int32_t>(sample) : sample;
+  if (magnitude <= kRemoteMicSoftLimitStart) {
+    return sample;
+  }
+
+  int32_t limited =
+      kRemoteMicSoftLimitStart + ((magnitude - kRemoteMicSoftLimitStart) >> 2);
+  if (limited > kRemoteMicSoftLimitMax) {
+    limited = kRemoteMicSoftLimitMax;
+  }
+
+  return static_cast<int16_t>(sample < 0 ? -limited : limited);
+}
+
+void limitSpeechChunk(int16_t* samples, size_t sampleCount) {
+  for (size_t i = 0; i < sampleCount; ++i) {
+    samples[i] = softLimitSample(samples[i]);
+  }
+}
+
 uint16_t encodePcm12Sample(int16_t sample) {
   return static_cast<uint16_t>((static_cast<int32_t>(sample) + 32768) >> 4);
 }
@@ -279,6 +304,7 @@ void remoteMicAppUpdate() {
     if (bleConnected && audioCharacteristic != nullptr) {
       downsampleCaptureChunk(captureBuffer, audioBuffer,
                              kStickLinkAudioSamplesPerChunk);
+      limitSpeechChunk(audioBuffer, kStickLinkAudioSamplesPerChunk);
       encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
                        pcm12Buffer);
       audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));

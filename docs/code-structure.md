@@ -191,10 +191,12 @@ fixed-duration recording buffer, so there is no firmware-side recording cap
 while Button A remains held. Only the current mic chunk and its compressed BLE
 packet are held in memory briefly.
 
-Remote Mic configures M5Unified mic capture at 16 kHz with reduced input
+Remote Mic configures M5Unified mic capture at 16 kHz with low input
 magnification and higher oversampling before `M5.Mic.begin()`. The BLE stream
 remains 8 kHz to keep packet pressure low. It avoids aggressive filtering and
-speech companding so saved WAV files preserve the actual mic waveform.
+speech companding so saved WAV files preserve the actual mic waveform. A final
+soft limiter catches rare speech peaks before packing so close speech does not
+clip to full scale.
 
 Each audio notification contains 100 PCM12 samples packed into 150 bytes, which
 is 12.5 ms of speech at 8 kHz. The packed format improves speech resolution over

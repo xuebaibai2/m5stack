@@ -84,8 +84,9 @@ custom BLE service and connects directly through CoreBluetooth.
   8 kHz. This keeps packet size safely under the BLE MTU while reducing the
   quantization noise of the earlier 8-bit stream.
 - The firmware applies light M5Unified mic conditioning before PCM12 encoding:
-  reduced input magnification with higher oversampling. These values are also
-  exposed in the BLE device-info JSON for debugging recordings.
+  low input magnification, higher oversampling, and a final soft limiter for
+  speech peaks. These values are also exposed in the BLE device-info JSON for
+  debugging recordings.
 - There is no fixed firmware recording-duration cap. Recording continues while
   Button A is held, subject to BLE link quality, battery, and macOS Speech
   session behavior. The StickS3 only holds the current mic chunk and outgoing
