@@ -7,6 +7,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <cstring>
+#include <ESP32-SpeexDSP.h>
 #include <M5GFX.h>
 #include <M5Unified.h>
 
@@ -32,13 +33,8 @@ constexpr size_t kRemoteMicCaptureSamplesPerChunk =
 constexpr uint8_t kRemoteMicMagnification = 1;
 constexpr uint8_t kRemoteMicNoiseFilterLevel = 0;
 constexpr uint8_t kRemoteMicOverSampling = 4;
-constexpr int32_t kAgcTargetPeak = 12000;
-constexpr int32_t kAgcSoftLimitStart = 18000;
-constexpr int32_t kAgcSoftLimitMax = 24000;
-constexpr int32_t kAgcMinGainQ15 = 16384;
-constexpr int32_t kAgcMaxGainQ15 = 65536;
-constexpr int32_t kAgcAttackStepQ15 = 4096;
-constexpr int32_t kAgcReleaseStepQ15 = 256;
+constexpr int32_t kFinalLimiterStart = 18000;
+constexpr int32_t kFinalLimiterMax = 24000;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -61,7 +57,8 @@ char lastStatus[96] = "Advertising";
 int16_t captureBuffer[kRemoteMicCaptureSamplesPerChunk] = {};
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 uint8_t pcm12Buffer[kStickLinkAudioBytesPerChunk] = {};
-int32_t agcGainQ15 = 32768;
+ESP32SpeexDSP remoteMicDsp;
+bool speexPreprocessReady = false;
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -97,9 +94,11 @@ String deviceInfoJson() {
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
   doc["codec_adc_volume_register"] = remoteMicCodecAdcVolumeRegister();
   doc["codec_adc_volume"] = remoteMicCodecAdcVolumeValue();
-  doc["agc_target_peak"] = kAgcTargetPeak;
-  doc["agc_soft_limit_start"] = kAgcSoftLimitStart;
-  doc["agc_soft_limit_max"] = kAgcSoftLimitMax;
+  doc["speex_preprocess"] = speexPreprocessReady ? "ready" : "pending";
+  doc["speex_noise_suppress_db"] = remoteMicSpeexNoiseSuppressionDb();
+  doc["speex_agc_target"] = remoteMicSpeexAgcTargetLevel();
+  doc["final_limiter_start"] = kFinalLimiterStart;
+  doc["final_limiter_max"] = kFinalLimiterMax;
 
   String output;
   serializeJson(doc, output);
@@ -216,61 +215,25 @@ void downsampleCaptureChunk(const int16_t* input, int16_t* output,
   }
 }
 
-int32_t chunkPeak(const int16_t* samples, size_t sampleCount) {
-  int32_t peak = 0;
-  for (size_t i = 0; i < sampleCount; ++i) {
-    const int32_t value = samples[i];
-    const int32_t magnitude = value < 0 ? -value : value;
-    if (magnitude > peak) {
-      peak = magnitude;
-    }
-  }
-  return peak;
-}
-
-void updateAgcGain(int32_t peak) {
-  if (peak <= 0) {
-    return;
-  }
-
-  const int32_t targetGainQ15 =
-      constrain((kAgcTargetPeak << 15) / peak, kAgcMinGainQ15,
-                kAgcMaxGainQ15);
-
-  if (targetGainQ15 < agcGainQ15) {
-    agcGainQ15 -= min(kAgcAttackStepQ15, agcGainQ15 - targetGainQ15);
-  } else if (targetGainQ15 > agcGainQ15) {
-    agcGainQ15 += min(kAgcReleaseStepQ15, targetGainQ15 - agcGainQ15);
-  }
-}
-
-int16_t applyAgcAndLimit(int16_t sample) {
-  int32_t scaled = (static_cast<int32_t>(sample) * agcGainQ15) >> 15;
-  if (scaled > INT16_MAX) {
-    scaled = INT16_MAX;
-  } else if (scaled < INT16_MIN) {
-    scaled = INT16_MIN;
-  }
-
-  const int32_t sampleValue = scaled;
+int16_t applyFinalLimit(int16_t sample) {
+  const int32_t sampleValue = sample;
   const int32_t magnitude = sampleValue < 0 ? -sampleValue : sampleValue;
-  if (magnitude <= kAgcSoftLimitStart) {
+  if (magnitude <= kFinalLimiterStart) {
     return static_cast<int16_t>(sampleValue);
   }
 
   int32_t limited =
-      kAgcSoftLimitStart + ((magnitude - kAgcSoftLimitStart) >> 2);
-  if (limited > kAgcSoftLimitMax) {
-    limited = kAgcSoftLimitMax;
+      kFinalLimiterStart + ((magnitude - kFinalLimiterStart) >> 2);
+  if (limited > kFinalLimiterMax) {
+    limited = kFinalLimiterMax;
   }
 
   return static_cast<int16_t>(sampleValue < 0 ? -limited : limited);
 }
 
-void applyAutomaticLevelControl(int16_t* samples, size_t sampleCount) {
-  updateAgcGain(chunkPeak(samples, sampleCount));
+void applyFinalLimiter(int16_t* samples, size_t sampleCount) {
   for (size_t i = 0; i < sampleCount; ++i) {
-    samples[i] = applyAgcAndLimit(samples[i]);
+    samples[i] = applyFinalLimit(samples[i]);
   }
 }
 
@@ -307,6 +270,26 @@ bool applyRemoteMicCodecInputLevel() {
     Serial.println("Remote Mic codec ADC volume write failed");
   }
   return ok;
+}
+
+void configureRemoteMicPreprocess() {
+  speexPreprocessReady = remoteMicDsp.beginMicPreprocess(
+      kRemoteMicCaptureSamplesPerChunk, kRemoteMicCaptureSampleRate);
+  if (!speexPreprocessReady) {
+    Serial.println("Remote Mic SpeexDSP preprocess init failed");
+    return;
+  }
+
+  remoteMicDsp.enableMicNoiseSuppression(true);
+  remoteMicDsp.setMicNoiseSuppressionLevel(remoteMicSpeexNoiseSuppressionDb());
+  remoteMicDsp.enableMicAGC(true, remoteMicSpeexAgcTargetLevel());
+  remoteMicDsp.enableMicVAD(false);
+}
+
+void preprocessCaptureChunk() {
+  if (speexPreprocessReady) {
+    remoteMicDsp.preprocessMicAudio(captureBuffer);
+  }
 }
 
 }  // namespace
@@ -359,9 +342,10 @@ void remoteMicAppUpdate() {
                     kRemoteMicCaptureSampleRate)) {
     ++audioChunkCount;
     if (bleConnected && audioCharacteristic != nullptr) {
+      preprocessCaptureChunk();
       downsampleCaptureChunk(captureBuffer, audioBuffer,
                              kStickLinkAudioSamplesPerChunk);
-      applyAutomaticLevelControl(audioBuffer, kStickLinkAudioSamplesPerChunk);
+      applyFinalLimiter(audioBuffer, kStickLinkAudioSamplesPerChunk);
       encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
                        pcm12Buffer);
       audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));
@@ -383,7 +367,7 @@ void remoteMicAppStartRecording() {
 
   ++sequenceNumber;
   audioChunkCount = 0;
-  agcGainQ15 = 32768;
+  configureRemoteMicPreprocess();
   lastSendAt = millis();
 
   if (!M5.Mic.isEnabled()) {

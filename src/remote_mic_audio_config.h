@@ -19,4 +19,12 @@ constexpr uint32_t remoteMicCodecI2cFrequency() {
   return 100000;
 }
 
+constexpr int remoteMicSpeexNoiseSuppressionDb() {
+  return -12;
+}
+
+constexpr float remoteMicSpeexAgcTargetLevel() {
+  return 0.45f;
+}
+
 #endif
