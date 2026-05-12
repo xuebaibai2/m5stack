@@ -12,23 +12,11 @@ constexpr uint8_t remoteMicCodecAdcVolumeRegister() {
 }
 
 constexpr uint8_t remoteMicCodecAdcVolumeValue() {
-  return 0xBF;
+  return 0xB3;
 }
 
 constexpr uint32_t remoteMicCodecI2cFrequency() {
   return 100000;
-}
-
-constexpr int remoteMicSpeexNoiseSuppressionDb() {
-  return -12;
-}
-
-constexpr int remoteMicSpeexAgcTargetPercent() {
-  return 45;
-}
-
-constexpr bool remoteMicSpeexEnabledByDefault() {
-  return false;
 }
 
 #endif

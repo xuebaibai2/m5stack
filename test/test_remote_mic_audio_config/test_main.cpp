@@ -3,22 +3,15 @@
 
 #include "remote_mic_audio_config.h"
 
-void test_remote_mic_codec_adc_volume_uses_zero_db() {
+void test_remote_mic_codec_adc_volume_keeps_headroom() {
   TEST_ASSERT_EQUAL_HEX8(0x17, remoteMicCodecAdcVolumeRegister());
-  TEST_ASSERT_EQUAL_HEX8(0xBF, remoteMicCodecAdcVolumeValue());
-}
-
-void test_remote_mic_speex_preprocess_uses_conservative_gain() {
-  TEST_ASSERT_EQUAL_INT(-12, remoteMicSpeexNoiseSuppressionDb());
-  TEST_ASSERT_EQUAL_INT(45, remoteMicSpeexAgcTargetPercent());
-  TEST_ASSERT_FALSE(remoteMicSpeexEnabledByDefault());
+  TEST_ASSERT_EQUAL_HEX8(0xB3, remoteMicCodecAdcVolumeValue());
 }
 
 void setup() {
   delay(2000);
   UNITY_BEGIN();
-  RUN_TEST(test_remote_mic_codec_adc_volume_uses_zero_db);
-  RUN_TEST(test_remote_mic_speex_preprocess_uses_conservative_gain);
+  RUN_TEST(test_remote_mic_codec_adc_volume_keeps_headroom);
   UNITY_END();
 }
 

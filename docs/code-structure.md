@@ -194,12 +194,11 @@ packet are held in memory briefly.
 Remote Mic configures M5Unified mic capture at 16 kHz with very low input
 magnification and higher oversampling before `M5.Mic.begin()`. After the mic
 starts, Remote Mic overrides the StickS3 ES8311 codec ADC volume register to
-0 dB so normal speech does not enter the firmware already clipped by codec
-max-gain. ESP32-SpeexDSP support is present but disabled by default after
-on-device Button A crashes during push-to-talk startup; enable it only for
-controlled experiments through `remoteMicSpeexEnabledByDefault()`. The BLE
-stream remains 8 kHz to keep packet pressure low. A final soft limiter catches
-remaining peaks before PCM12 packing.
+a lower-than-0 dB value so normal speech has extra headroom before PCM12
+packing. The BLE stream remains 8 kHz to keep packet pressure low. Firmware
+uses a small 5-tap FIR low-pass while downsampling from 16 kHz to 8 kHz; avoid
+adding nonlinear limiters or speech preprocessors unless a saved WAV proves the
+linear path is still clipping.
 
 Each audio notification contains 100 PCM12 samples packed into 150 bytes, which
 is 12.5 ms of speech at 8 kHz. The packed format improves speech resolution over

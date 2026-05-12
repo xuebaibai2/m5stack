@@ -7,7 +7,6 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <cstring>
-#include <ESP32-SpeexDSP.h>
 #include <M5GFX.h>
 #include <M5Unified.h>
 
@@ -33,8 +32,6 @@ constexpr size_t kRemoteMicCaptureSamplesPerChunk =
 constexpr uint8_t kRemoteMicMagnification = 1;
 constexpr uint8_t kRemoteMicNoiseFilterLevel = 0;
 constexpr uint8_t kRemoteMicOverSampling = 4;
-constexpr int32_t kFinalLimiterStart = 18000;
-constexpr int32_t kFinalLimiterMax = 24000;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -46,7 +43,6 @@ bool bleConnected = false;
 bool appVisible = false;
 bool screenDirty = false;
 bool recording = false;
-bool speexPreprocessEnabled = remoteMicSpeexEnabledByDefault();
 uint32_t sequenceNumber = 0;
 uint32_t lastChunkRedrawAt = 0;
 uint32_t lastSendAt = 0;
@@ -58,8 +54,6 @@ char lastStatus[96] = "Advertising";
 int16_t captureBuffer[kRemoteMicCaptureSamplesPerChunk] = {};
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 uint8_t pcm12Buffer[kStickLinkAudioBytesPerChunk] = {};
-ESP32SpeexDSP remoteMicDsp;
-bool speexPreprocessReady = false;
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -95,12 +89,7 @@ String deviceInfoJson() {
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
   doc["codec_adc_volume_register"] = remoteMicCodecAdcVolumeRegister();
   doc["codec_adc_volume"] = remoteMicCodecAdcVolumeValue();
-  doc["speex_enabled"] = speexPreprocessEnabled;
-  doc["speex_preprocess"] = speexPreprocessReady ? "ready" : "pending";
-  doc["speex_noise_suppress_db"] = remoteMicSpeexNoiseSuppressionDb();
-  doc["speex_agc_target_percent"] = remoteMicSpeexAgcTargetPercent();
-  doc["final_limiter_start"] = kFinalLimiterStart;
-  doc["final_limiter_max"] = kFinalLimiterMax;
+  doc["downsample_filter"] = "fir_5_tap_binomial";
 
   String output;
   serializeJson(doc, output);
@@ -211,31 +200,17 @@ void startAdvertising() {
 void downsampleCaptureChunk(const int16_t* input, int16_t* output,
                             size_t outputCount) {
   for (size_t i = 0; i < outputCount; ++i) {
-    const int32_t first = input[i * 2];
-    const int32_t second = input[i * 2 + 1];
-    output[i] = static_cast<int16_t>((first + second) / 2);
-  }
-}
-
-int16_t applyFinalLimit(int16_t sample) {
-  const int32_t sampleValue = sample;
-  const int32_t magnitude = sampleValue < 0 ? -sampleValue : sampleValue;
-  if (magnitude <= kFinalLimiterStart) {
-    return static_cast<int16_t>(sampleValue);
-  }
-
-  int32_t limited =
-      kFinalLimiterStart + ((magnitude - kFinalLimiterStart) >> 2);
-  if (limited > kFinalLimiterMax) {
-    limited = kFinalLimiterMax;
-  }
-
-  return static_cast<int16_t>(sampleValue < 0 ? -limited : limited);
-}
-
-void applyFinalLimiter(int16_t* samples, size_t sampleCount) {
-  for (size_t i = 0; i < sampleCount; ++i) {
-    samples[i] = applyFinalLimit(samples[i]);
+    const size_t center = i * 2;
+    const int32_t xm2 = center >= 2 ? input[center - 2] : input[center];
+    const int32_t xm1 = center >= 1 ? input[center - 1] : input[center];
+    const int32_t x0 = input[center];
+    const int32_t xp1 =
+        center + 1 < kRemoteMicCaptureSamplesPerChunk ? input[center + 1] : x0;
+    const int32_t xp2 =
+        center + 2 < kRemoteMicCaptureSamplesPerChunk ? input[center + 2] : x0;
+    output[i] =
+        static_cast<int16_t>((xm2 + (4 * xm1) + (6 * x0) + (4 * xp1) + xp2) /
+                             16);
   }
 }
 
@@ -272,31 +247,6 @@ bool applyRemoteMicCodecInputLevel() {
     Serial.println("Remote Mic codec ADC volume write failed");
   }
   return ok;
-}
-
-void configureRemoteMicPreprocess() {
-  if (!speexPreprocessEnabled || speexPreprocessReady) {
-    return;
-  }
-
-  speexPreprocessReady = remoteMicDsp.beginMicPreprocess(
-      kRemoteMicCaptureSamplesPerChunk, kRemoteMicCaptureSampleRate);
-  if (!speexPreprocessReady) {
-    Serial.println("Remote Mic SpeexDSP preprocess init failed");
-    speexPreprocessEnabled = false;
-    return;
-  }
-
-  remoteMicDsp.enableMicNoiseSuppression(true);
-  remoteMicDsp.setMicNoiseSuppressionLevel(remoteMicSpeexNoiseSuppressionDb());
-  remoteMicDsp.enableMicAGC(true, remoteMicSpeexAgcTargetPercent() / 100.0f);
-  remoteMicDsp.enableMicVAD(false);
-}
-
-void preprocessCaptureChunk() {
-  if (speexPreprocessEnabled && speexPreprocessReady) {
-    remoteMicDsp.preprocessMicAudio(captureBuffer);
-  }
 }
 
 }  // namespace
@@ -349,10 +299,8 @@ void remoteMicAppUpdate() {
                     kRemoteMicCaptureSampleRate)) {
     ++audioChunkCount;
     if (bleConnected && audioCharacteristic != nullptr) {
-      preprocessCaptureChunk();
       downsampleCaptureChunk(captureBuffer, audioBuffer,
                              kStickLinkAudioSamplesPerChunk);
-      applyFinalLimiter(audioBuffer, kStickLinkAudioSamplesPerChunk);
       encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
                        pcm12Buffer);
       audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));
@@ -382,7 +330,6 @@ void remoteMicAppStartRecording() {
     M5.Mic.begin();
   }
   applyRemoteMicCodecInputLevel();
-  configureRemoteMicPreprocess();
 
   recording = true;
   const String payload = stickLinkEncodeVoiceEvent(

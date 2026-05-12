@@ -70,10 +70,9 @@ messaging, or the companion Mac menu bar app.
 - On StickS3, override the ES8311 codec ADC volume after `M5.Mic.begin()` so
   M5Unified's codec max-gain default does not clip normal speech before the app
   receives samples.
-- ESP32-SpeexDSP is available for Remote Mic experiments but disabled by
-  default because on-device Button A startup crashed when preprocessing was
-  enabled unconditionally.
-- Keep a final soft limiter before PCM packing.
+- Prefer a linear Remote Mic path: lower codec input gain, filtered downsampling,
+  and PCM packing. Avoid nonlinear limiters or speech preprocessors unless a
+  saved WAV proves the linear path is clipping.
 - For Remote Mic speech quality, prefer the simplest possible capture path
   before adding filters or speech codecs that can sound robotic.
 - Keep the protocol generic: use `app`, `type`, and `name` fields instead of
