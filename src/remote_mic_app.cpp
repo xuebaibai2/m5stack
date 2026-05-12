@@ -46,6 +46,7 @@ bool bleConnected = false;
 bool appVisible = false;
 bool screenDirty = false;
 bool recording = false;
+bool speexPreprocessEnabled = remoteMicSpeexEnabledByDefault();
 uint32_t sequenceNumber = 0;
 uint32_t lastChunkRedrawAt = 0;
 uint32_t lastSendAt = 0;
@@ -94,9 +95,10 @@ String deviceInfoJson() {
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
   doc["codec_adc_volume_register"] = remoteMicCodecAdcVolumeRegister();
   doc["codec_adc_volume"] = remoteMicCodecAdcVolumeValue();
+  doc["speex_enabled"] = speexPreprocessEnabled;
   doc["speex_preprocess"] = speexPreprocessReady ? "ready" : "pending";
   doc["speex_noise_suppress_db"] = remoteMicSpeexNoiseSuppressionDb();
-  doc["speex_agc_target"] = remoteMicSpeexAgcTargetLevel();
+  doc["speex_agc_target_percent"] = remoteMicSpeexAgcTargetPercent();
   doc["final_limiter_start"] = kFinalLimiterStart;
   doc["final_limiter_max"] = kFinalLimiterMax;
 
@@ -273,21 +275,26 @@ bool applyRemoteMicCodecInputLevel() {
 }
 
 void configureRemoteMicPreprocess() {
+  if (!speexPreprocessEnabled || speexPreprocessReady) {
+    return;
+  }
+
   speexPreprocessReady = remoteMicDsp.beginMicPreprocess(
       kRemoteMicCaptureSamplesPerChunk, kRemoteMicCaptureSampleRate);
   if (!speexPreprocessReady) {
     Serial.println("Remote Mic SpeexDSP preprocess init failed");
+    speexPreprocessEnabled = false;
     return;
   }
 
   remoteMicDsp.enableMicNoiseSuppression(true);
   remoteMicDsp.setMicNoiseSuppressionLevel(remoteMicSpeexNoiseSuppressionDb());
-  remoteMicDsp.enableMicAGC(true, remoteMicSpeexAgcTargetLevel());
+  remoteMicDsp.enableMicAGC(true, remoteMicSpeexAgcTargetPercent() / 100.0f);
   remoteMicDsp.enableMicVAD(false);
 }
 
 void preprocessCaptureChunk() {
-  if (speexPreprocessReady) {
+  if (speexPreprocessEnabled && speexPreprocessReady) {
     remoteMicDsp.preprocessMicAudio(captureBuffer);
   }
 }
@@ -367,7 +374,6 @@ void remoteMicAppStartRecording() {
 
   ++sequenceNumber;
   audioChunkCount = 0;
-  configureRemoteMicPreprocess();
   lastSendAt = millis();
 
   if (!M5.Mic.isEnabled()) {
@@ -376,6 +382,7 @@ void remoteMicAppStartRecording() {
     M5.Mic.begin();
   }
   applyRemoteMicCodecInputLevel();
+  configureRemoteMicPreprocess();
 
   recording = true;
   const String payload = stickLinkEncodeVoiceEvent(

@@ -23,8 +23,12 @@ constexpr int remoteMicSpeexNoiseSuppressionDb() {
   return -12;
 }
 
-constexpr float remoteMicSpeexAgcTargetLevel() {
-  return 0.45f;
+constexpr int remoteMicSpeexAgcTargetPercent() {
+  return 45;
+}
+
+constexpr bool remoteMicSpeexEnabledByDefault() {
+  return false;
 }
 
 #endif

@@ -85,9 +85,11 @@ custom BLE service and connects directly through CoreBluetooth.
   quantization noise of the earlier 8-bit stream.
 - The firmware applies light M5Unified mic conditioning before PCM12 encoding:
   very low input magnification, higher oversampling, a StickS3 ES8311 codec ADC
-  volume override to 0 dB, ESP32-SpeexDSP mic preprocessing, and a final soft
-  limiter for speech peaks. These values are also exposed in the BLE device-info
-  JSON for debugging recordings.
+  volume override to 0 dB, and a final soft limiter for speech peaks.
+  ESP32-SpeexDSP preprocessing is compiled in but disabled by default because it
+  crashed the Button A push-to-talk path on-device; use it only as an explicit
+  experiment. These values are also exposed in the BLE device-info JSON for
+  debugging recordings.
 - There is no fixed firmware recording-duration cap. Recording continues while
   Button A is held, subject to BLE link quality, battery, and macOS Speech
   session behavior. The StickS3 only holds the current mic chunk and outgoing

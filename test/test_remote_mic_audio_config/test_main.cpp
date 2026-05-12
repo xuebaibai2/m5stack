@@ -10,7 +10,8 @@ void test_remote_mic_codec_adc_volume_uses_zero_db() {
 
 void test_remote_mic_speex_preprocess_uses_conservative_gain() {
   TEST_ASSERT_EQUAL_INT(-12, remoteMicSpeexNoiseSuppressionDb());
-  TEST_ASSERT_EQUAL_INT(45, static_cast<int>(remoteMicSpeexAgcTargetLevel() * 100));
+  TEST_ASSERT_EQUAL_INT(45, remoteMicSpeexAgcTargetPercent());
+  TEST_ASSERT_FALSE(remoteMicSpeexEnabledByDefault());
 }
 
 void setup() {
