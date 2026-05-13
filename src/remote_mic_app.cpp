@@ -27,11 +27,14 @@ constexpr int kChunkValueY = 124;
 constexpr int kChunkValueW = 216;
 constexpr int kChunkValueH = 14;
 constexpr uint32_t kRemoteMicCaptureSampleRate = 16000;
-constexpr size_t kRemoteMicCaptureSamplesPerChunk =
+constexpr size_t kRemoteMicCaptureFramesPerChunk =
     kStickLinkAudioSamplesPerChunk * 2;
+constexpr size_t kRemoteMicCaptureSamplesPerChunk =
+    kRemoteMicCaptureFramesPerChunk * 2;
 constexpr uint8_t kRemoteMicMagnification = 1;
 constexpr uint8_t kRemoteMicNoiseFilterLevel = 0;
 constexpr uint8_t kRemoteMicOverSampling = 4;
+constexpr uint8_t kRemoteMicPrimeChunks = 3;
 
 BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
@@ -43,6 +46,7 @@ bool bleConnected = false;
 bool appVisible = false;
 bool screenDirty = false;
 bool recording = false;
+bool remoteMicInputReady = false;
 uint32_t sequenceNumber = 0;
 uint32_t lastChunkRedrawAt = 0;
 uint32_t lastSendAt = 0;
@@ -51,9 +55,14 @@ uint32_t displayedAudioChunkCount = UINT32_MAX;
 bool displayedBleConnected = false;
 char displayedStatus[96] = "";
 char lastStatus[96] = "Advertising";
-int16_t captureBuffer[kRemoteMicCaptureSamplesPerChunk] = {};
+int16_t captureBuffers[2][kRemoteMicCaptureSamplesPerChunk] = {};
 int16_t audioBuffer[kStickLinkAudioSamplesPerChunk] = {};
 uint8_t pcm12Buffer[kStickLinkAudioBytesPerChunk] = {};
+uint8_t captureWriteBuffer = 0;
+int8_t completedCaptureBuffer = -1;
+bool lastCodecInputLevelOk = false;
+uint8_t lastCodecInputLevelReadback = 0;
+uint8_t primingChunksRemaining = 0;
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -197,17 +206,25 @@ void startAdvertising() {
   BLEDevice::startAdvertising();
 }
 
+int32_t captureFrameMono(const int16_t* input, size_t frame) {
+  const int32_t left = input[frame * 2];
+  const int32_t right = input[(frame * 2) + 1];
+  return (left + right) / 2;
+}
+
 void downsampleCaptureChunk(const int16_t* input, int16_t* output,
                             size_t outputCount) {
   for (size_t i = 0; i < outputCount; ++i) {
     const size_t center = i * 2;
-    const int32_t xm2 = center >= 2 ? input[center - 2] : input[center];
-    const int32_t xm1 = center >= 1 ? input[center - 1] : input[center];
-    const int32_t x0 = input[center];
-    const int32_t xp1 =
-        center + 1 < kRemoteMicCaptureSamplesPerChunk ? input[center + 1] : x0;
-    const int32_t xp2 =
-        center + 2 < kRemoteMicCaptureSamplesPerChunk ? input[center + 2] : x0;
+    const int32_t x0 = captureFrameMono(input, center);
+    const int32_t xm2 = center >= 2 ? captureFrameMono(input, center - 2) : x0;
+    const int32_t xm1 = center >= 1 ? captureFrameMono(input, center - 1) : x0;
+    const int32_t xp1 = center + 1 < kRemoteMicCaptureFramesPerChunk
+                            ? captureFrameMono(input, center + 1)
+                            : x0;
+    const int32_t xp2 = center + 2 < kRemoteMicCaptureFramesPerChunk
+                            ? captureFrameMono(input, center + 2)
+                            : x0;
     output[i] =
         static_cast<int16_t>((xm2 + (4 * xm1) + (6 * x0) + (4 * xp1) + xp2) /
                              16);
@@ -230,6 +247,34 @@ void encodePcm12Chunk(const int16_t* samples, size_t sampleCount, uint8_t* out) 
   }
 }
 
+void resetCapturePipeline() {
+  captureWriteBuffer = 0;
+  completedCaptureBuffer = -1;
+  primingChunksRemaining = kRemoteMicPrimeChunks;
+  memset(captureBuffers, 0, sizeof(captureBuffers));
+  memset(audioBuffer, 0, sizeof(audioBuffer));
+  memset(pcm12Buffer, 0, sizeof(pcm12Buffer));
+}
+
+void sendCompletedCaptureChunk(const int16_t* samples) {
+  if (!recording) {
+    return;
+  }
+
+  if (primingChunksRemaining > 0) {
+    --primingChunksRemaining;
+    return;
+  }
+
+  ++audioChunkCount;
+  if (bleConnected && audioCharacteristic != nullptr) {
+    downsampleCaptureChunk(samples, audioBuffer, kStickLinkAudioSamplesPerChunk);
+    encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk, pcm12Buffer);
+    audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));
+    audioCharacteristic->notify();
+  }
+}
+
 void configureRemoteMicInput() {
   auto cfg = M5.Mic.config();
   cfg.sample_rate = kRemoteMicCaptureSampleRate;
@@ -240,13 +285,70 @@ void configureRemoteMicInput() {
 }
 
 bool applyRemoteMicCodecInputLevel() {
-  const bool ok = M5.In_I2C.writeRegister8(
+  m5gfx::i2c::i2c_temporary_switcher_t backupI2cSetting(1, GPIO_NUM_47,
+                                                         GPIO_NUM_48);
+  bool ok = true;
+  ok &= M5.In_I2C.writeRegister8(remoteMicCodecI2cAddress(), 0x00, 0x80,
+                                 remoteMicCodecI2cFrequency());
+  ok &= M5.In_I2C.writeRegister8(remoteMicCodecI2cAddress(), 0x01, 0xBA,
+                                 remoteMicCodecI2cFrequency());
+  ok &= M5.In_I2C.writeRegister8(remoteMicCodecI2cAddress(), 0x02, 0x18,
+                                 remoteMicCodecI2cFrequency());
+  ok &= M5.In_I2C.writeRegister8(remoteMicCodecI2cAddress(), 0x0D, 0x01,
+                                 remoteMicCodecI2cFrequency());
+  ok &= M5.In_I2C.writeRegister8(remoteMicCodecI2cAddress(), 0x0E, 0x02,
+                                 remoteMicCodecI2cFrequency());
+  ok &= M5.In_I2C.writeRegister8(remoteMicCodecI2cAddress(), 0x14, 0x10,
+                                 remoteMicCodecI2cFrequency());
+  ok &= M5.In_I2C.writeRegister8(
       remoteMicCodecI2cAddress(), remoteMicCodecAdcVolumeRegister(),
       remoteMicCodecAdcVolumeValue(), remoteMicCodecI2cFrequency());
+  ok &= M5.In_I2C.writeRegister8(remoteMicCodecI2cAddress(), 0x1C, 0x6A,
+                                 remoteMicCodecI2cFrequency());
+  uint8_t value = 0;
   if (!ok) {
     Serial.println("Remote Mic codec ADC volume write failed");
+  } else {
+    value = M5.In_I2C.readRegister8(
+        remoteMicCodecI2cAddress(), remoteMicCodecAdcVolumeRegister(),
+        remoteMicCodecI2cFrequency());
+    Serial.printf("Remote Mic codec ADC volume set/read: 0x%02X/0x%02X\n",
+                  remoteMicCodecAdcVolumeValue(), value);
   }
+  backupI2cSetting.restore();
+  lastCodecInputLevelOk = ok;
+  lastCodecInputLevelReadback = value;
   return ok;
+}
+
+void startRemoteMicInput() {
+  if (remoteMicInputReady && M5.Mic.isRunning()) {
+    return;
+  }
+
+  if (M5.Mic.isRunning()) {
+    while (M5.Mic.isRecording()) {
+      delay(1);
+    }
+    M5.Mic.end();
+  }
+  M5.Speaker.end();
+  configureRemoteMicInput();
+  M5.Mic.begin();
+  applyRemoteMicCodecInputLevel();
+  delay(80);
+  remoteMicInputReady = M5.Mic.isRunning();
+}
+
+void stopRemoteMicInput() {
+  if (M5.Mic.isRunning()) {
+    while (M5.Mic.isRecording()) {
+      delay(1);
+    }
+    M5.Mic.end();
+  }
+  remoteMicInputReady = false;
+  resetCapturePipeline();
 }
 
 }  // namespace
@@ -290,21 +392,25 @@ void remoteMicAppBegin() {
 void remoteMicAppStart() {
   appVisible = true;
   screenDirty = true;
+  startRemoteMicInput();
   drawRemoteMicScreen();
 }
 
 void remoteMicAppUpdate() {
-  if (recording && M5.Mic.isEnabled() &&
-      M5.Mic.record(captureBuffer, kRemoteMicCaptureSamplesPerChunk,
-                    kRemoteMicCaptureSampleRate)) {
-    ++audioChunkCount;
-    if (bleConnected && audioCharacteristic != nullptr) {
-      downsampleCaptureChunk(captureBuffer, audioBuffer,
-                             kStickLinkAudioSamplesPerChunk);
-      encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk,
-                       pcm12Buffer);
-      audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));
-      audioCharacteristic->notify();
+  if (appVisible && !remoteMicInputReady) {
+    startRemoteMicInput();
+  }
+
+  if (appVisible && M5.Mic.isEnabled()) {
+    const uint8_t submittedBuffer = captureWriteBuffer;
+    if (M5.Mic.record(captureBuffers[submittedBuffer],
+                      kRemoteMicCaptureSamplesPerChunk,
+                      kRemoteMicCaptureSampleRate, true)) {
+      if (completedCaptureBuffer >= 0) {
+        sendCompletedCaptureChunk(captureBuffers[completedCaptureBuffer]);
+      }
+      completedCaptureBuffer = submittedBuffer;
+      captureWriteBuffer = 1 - submittedBuffer;
     }
   }
 
@@ -323,17 +429,18 @@ void remoteMicAppStartRecording() {
   ++sequenceNumber;
   audioChunkCount = 0;
   lastSendAt = millis();
-
-  if (!M5.Mic.isEnabled()) {
-    M5.Speaker.end();
-    configureRemoteMicInput();
-    M5.Mic.begin();
-  }
-  applyRemoteMicCodecInputLevel();
+  resetCapturePipeline();
+  startRemoteMicInput();
 
   recording = true;
-  const String payload = stickLinkEncodeVoiceEvent(
-      "start", "Remote Mic recording started", lastSendAt, sequenceNumber);
+  char startText[96];
+  snprintf(startText, sizeof(startText),
+           lastCodecInputLevelOk
+               ? "Remote Mic recording started codec 0x%02X/0x%02X"
+               : "Remote Mic recording started codec write failed",
+           remoteMicCodecAdcVolumeValue(), lastCodecInputLevelReadback);
+  const String payload =
+      stickLinkEncodeVoiceEvent("start", startText, lastSendAt, sequenceNumber);
 
   if (messageCharacteristic != nullptr) {
     messageCharacteristic->setValue(payload.c_str());
@@ -360,6 +467,10 @@ void remoteMicAppStopRecording() {
   while (M5.Mic.isRecording()) {
     delay(1);
   }
+  if (completedCaptureBuffer >= 0) {
+    sendCompletedCaptureChunk(captureBuffers[completedCaptureBuffer]);
+    completedCaptureBuffer = -1;
+  }
 
   ++sequenceNumber;
   const String payload =
@@ -380,6 +491,7 @@ void remoteMicAppStopRecording() {
 
 void remoteMicAppStop() {
   remoteMicAppStopRecording();
+  stopRemoteMicInput();
   appVisible = false;
 }
 

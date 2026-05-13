@@ -8,6 +8,66 @@ public protocol StickAudioReceiver: AnyObject {
     func updateConfig(_ config: StickLinkConfig)
 }
 
+public struct RemoteMicSessionTracker {
+    public private(set) var currentSessionID: UInt64 = 0
+
+    public init() {}
+
+    @discardableResult
+    public mutating func startSession() -> UInt64 {
+        currentSessionID &+= 1
+        return currentSessionID
+    }
+
+    public mutating func invalidateCurrentSession() {
+        currentSessionID &+= 1
+    }
+
+    public func isCurrent(_ sessionID: UInt64) -> Bool {
+        sessionID == currentSessionID
+    }
+}
+
+public enum RemoteMicRecordingNamer {
+    public static func filename(for date: Date = Date(), sessionID: UInt64) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "StickLink-RemoteMic-\(formatter.string(from: date))-s\(sessionID).wav"
+    }
+}
+
+public struct Pcm16LevelStats: Equatable {
+    public let sampleCount: Int
+    public let peak: Int
+    public let rms: Int
+
+    public init(data: Data) {
+        var sampleCount = 0
+        var peak = 0
+        var sumSquares = 0.0
+
+        data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else {
+                return
+            }
+
+            let samples = baseAddress.assumingMemoryBound(to: Int16.self)
+            let count = data.count / MemoryLayout<Int16>.size
+            for index in 0..<count {
+                let sample = Int(Int16(littleEndian: samples[index]))
+                let magnitude = sample == Int(Int16.min) ? Int(Int16.max) : abs(sample)
+                peak = max(peak, magnitude)
+                sumSquares += Double(sample * sample)
+            }
+            sampleCount = count
+        }
+
+        self.sampleCount = sampleCount
+        self.peak = peak
+        self.rms = sampleCount > 0 ? Int((sumSquares / Double(sampleCount)).squareRoot()) : 0
+    }
+}
+
 public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
     @Published public private(set) var isRecording = false
     @Published public private(set) var latestTranscript = ""
@@ -22,8 +82,11 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
     private let audioDecoder = Pcm12Decoder()
     private var finalTranscript = ""
     private var receivedAudio = Data()
+    private var receivedChunkCount = 0
+    private var droppedChunkCount = 0
     private var finishRequested = false
     private var didFinalizeSession = false
+    private var sessionTracker = RemoteMicSessionTracker()
 
     public init(config: StickLinkConfig, logStore: LogStore, outputController: TextOutputController) {
         self.config = config
@@ -53,45 +116,68 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
     }
 
     public func handleAudioChunk(_ data: Data) {
-        guard isRecording, let request else {
+        guard isRecording else {
+            droppedChunkCount += 1
+            if droppedChunkCount == 1 || droppedChunkCount.isMultiple(of: 25) {
+                logStore.append(.warning, "Dropped audio chunk without active recording: \(data.count) bytes")
+            }
             return
         }
 
         let pcmData = audioDecoder.decode(data)
-        guard let buffer = pcmBuffer(from: pcmData) else {
+        guard !pcmData.isEmpty else {
             logStore.append(.warning, "Dropped malformed audio chunk: \(data.count) bytes")
             return
         }
 
-        request.append(buffer)
+        receivedChunkCount += 1
+        receivedAudio.append(pcmData)
+
+        if let request {
+            guard let buffer = pcmBuffer(from: pcmData) else {
+                logStore.append(.warning, "Decoded audio chunk could not be buffered: \(pcmData.count) bytes")
+                return
+            }
+            request.append(buffer)
+        }
     }
 
     private func startSession() {
         stopSession(shouldPaste: false)
+        let sessionID = sessionTracker.startSession()
+
+        self.finalTranscript = ""
+        self.latestTranscript = ""
+        self.receivedAudio.removeAll(keepingCapacity: true)
+        self.receivedChunkCount = 0
+        self.droppedChunkCount = 0
+        self.audioDecoder.reset()
+        self.finishRequested = false
+        self.didFinalizeSession = false
+        self.isRecording = true
+        self.recognizer = SFSpeechRecognizer(locale: Locale(identifier: config.transcriptionLocaleIdentifier))
+
+        logStore.append(.info, "Remote Mic audio capture started")
 
         guard let recognizer else {
-            logStore.append(.error, "Speech recognizer unavailable")
+            logStore.append(.error, "Speech recognizer unavailable; saving audio only")
             return
         }
 
         guard recognizer.isAvailable else {
-            logStore.append(.error, "Speech recognizer is not available")
+            logStore.append(.error, "Speech recognizer is not available; saving audio only")
             return
         }
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         self.request = request
-        self.finalTranscript = ""
-        self.latestTranscript = ""
-        self.receivedAudio.removeAll(keepingCapacity: true)
-        self.audioDecoder.reset()
-        self.finishRequested = false
-        self.didFinalizeSession = false
-        self.isRecording = true
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self else {
+                return
+            }
+            guard self.sessionTracker.isCurrent(sessionID) else {
                 return
             }
 
@@ -104,11 +190,16 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
             }
 
             if let error {
-                self.logStore.append(.error, "Speech recognition failed: \(error.localizedDescription)")
+                let message = "Speech recognition failed: \(error.localizedDescription)"
+                if error.localizedDescription.localizedCaseInsensitiveContains("no speech") {
+                    self.logStore.append(.warning, "\(message); WAV saved for inspection")
+                } else {
+                    self.logStore.append(.error, message)
+                }
             }
 
             if self.finishRequested, result?.isFinal == true || error != nil {
-                self.finalizeSession(shouldPaste: true)
+                self.finalizeSession(shouldPaste: true, sessionID: sessionID)
             }
         }
 
@@ -120,22 +211,23 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
             return
         }
 
-        saveRecordingIfNeeded()
+        let sessionID = sessionTracker.currentSessionID
+        let chunkCount = receivedChunkCount
+        let byteCount = receivedAudio.count
         finishRequested = shouldPaste
-        request?.endAudio()
-        task?.finish()
-        request = nil
-        isRecording = false
-
         if shouldPaste {
-            logStore.append(.info, "Remote Mic audio ended; waiting for final transcript")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.finalizeSession(shouldPaste: true)
-            }
+            saveRecordingIfNeeded()
+            logStore.append(.audio, "Remote Mic audio ended: \(chunkCount) chunks, \(byteCount) bytes")
+            finalizeSession(shouldPaste: shouldPaste, sessionID: sessionID)
         }
+        resetSessionAfterStop()
     }
 
-    private func finalizeSession(shouldPaste: Bool) {
+    private func finalizeSession(shouldPaste: Bool, sessionID: UInt64) {
+        guard sessionTracker.isCurrent(sessionID) else {
+            return
+        }
+
         guard !didFinalizeSession else {
             return
         }
@@ -154,6 +246,21 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
         }
     }
 
+    private func resetSessionAfterStop() {
+        request?.endAudio()
+        task?.cancel()
+        request = nil
+        task = nil
+        isRecording = false
+        finishRequested = false
+        receivedAudio.removeAll(keepingCapacity: true)
+        receivedChunkCount = 0
+        droppedChunkCount = 0
+        audioDecoder.reset()
+        sessionTracker.invalidateCurrentSession()
+        logStore.append(.info, "Remote Mic session reset")
+    }
+
     private func saveRecordingIfNeeded() {
         guard config.saveRecordingsToDownloads, !receivedAudio.isEmpty else {
             return
@@ -162,14 +269,14 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
         do {
             let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
                 ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyyMMdd-HHmmss"
-            let filename = "StickLink-RemoteMic-\(formatter.string(from: Date())).wav"
+            let filename = RemoteMicRecordingNamer.filename(sessionID: sessionTracker.currentSessionID)
             let url = downloads.appendingPathComponent(filename)
             try WavFileWriter.writePCM16Mono(data: receivedAudio,
                                              sampleRate: Int(config.audioSampleRate),
                                              to: url)
+            let stats = Pcm16LevelStats(data: receivedAudio)
             logStore.append(.info, "Saved recording: \(url.path)")
+            logStore.append(.audio, "Recording level: peak \(stats.peak), rms \(stats.rms), samples \(stats.sampleCount)")
         } catch {
             logStore.append(.error, "Recording save failed: \(error.localizedDescription)")
         }
@@ -180,8 +287,6 @@ public final class RemoteMicTranscriber: ObservableObject, StickAudioReceiver {
               data.count % MemoryLayout<Int16>.size == 0 else {
             return nil
         }
-
-        receivedAudio.append(data)
 
         let sampleCount = data.count / MemoryLayout<Int16>.size
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleCount)),

@@ -3,11 +3,14 @@ import Combine
 
 public final class LogStore: ObservableObject {
     public struct Entry: Identifiable, Equatable {
-        public enum Level: String, Equatable {
+        public enum Level: String, CaseIterable, Equatable, Identifiable {
             case info
+            case audio
             case received
             case warning
             case error
+
+            public var id: String { rawValue }
         }
 
         public let id: UUID
@@ -39,6 +42,10 @@ public final class LogStore: ObservableObject {
 
     public func append(_ level: Entry.Level, _ message: String) {
         append(Entry(level: level, message: message))
+    }
+
+    public func clear() {
+        entries.removeAll()
     }
 
     public func append(_ message: StickMessage) {

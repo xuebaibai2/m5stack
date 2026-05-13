@@ -101,12 +101,49 @@ func validatePcm12Decoder() throws {
     try expect(decoder.decode(Data([0x00, 0x01])).isEmpty, "malformed PCM12 chunk is rejected")
 }
 
+func validateRemoteMicSessionTracker() throws {
+    var tracker = RemoteMicSessionTracker()
+    let firstSession = tracker.startSession()
+    let secondSession = tracker.startSession()
+
+    try expect(firstSession != secondSession, "new Remote Mic sessions get unique ids")
+    try expect(!tracker.isCurrent(firstSession), "previous Remote Mic session callbacks are stale")
+    try expect(tracker.isCurrent(secondSession), "current Remote Mic session callbacks are accepted")
+    tracker.invalidateCurrentSession()
+    try expect(!tracker.isCurrent(secondSession), "ended Remote Mic session callbacks are stale")
+}
+
+func validateRemoteMicRecordingNamer() throws {
+    let date = Date(timeIntervalSince1970: 1_799_999_999.123)
+    let first = RemoteMicRecordingNamer.filename(for: date, sessionID: 1)
+    let second = RemoteMicRecordingNamer.filename(for: date, sessionID: 2)
+
+    try expect(first != second, "recordings in the same second do not overwrite each other")
+    try expect(first.hasSuffix("-s1.wav"), "recording filename includes session id")
+}
+
+func validatePcm16LevelStats() throws {
+    var pcm = Data()
+    let samples = [Int16(0), Int16(1200), Int16(-1600), Int16(800)]
+    for sample in samples {
+        var littleEndian = sample.littleEndian
+        withUnsafeBytes(of: &littleEndian) { pcm.append(contentsOf: $0) }
+    }
+
+    let stats = Pcm16LevelStats(data: pcm)
+    try expect(stats.sampleCount == samples.count, "PCM level stats count samples")
+    try expect(stats.peak == 1600, "PCM level stats finds peak")
+    try expect(stats.rms > 0, "PCM level stats computes RMS")
+}
+
 func validateLogStore() throws {
     let store = LogStore(maxCount: 2)
     store.append(LogStore.info("first"))
     store.append(LogStore.info("second"))
     store.append(LogStore.info("third"))
     try expect(store.entries.map(\.message) == ["second", "third"], "log store retains newest entries")
+    store.clear()
+    try expect(store.entries.isEmpty, "log store clears entries")
 
     let message = StickMessage(
         version: 1,
@@ -129,6 +166,9 @@ do {
     try validateLogStore()
     try validateWavWriter()
     try validatePcm12Decoder()
+    try validateRemoteMicSessionTracker()
+    try validateRemoteMicRecordingNamer()
+    try validatePcm16LevelStats()
     print("StickLinkValidation passed")
 } catch {
     fputs("StickLinkValidation failed: \(error)\n", stderr)

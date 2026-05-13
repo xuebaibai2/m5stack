@@ -303,6 +303,9 @@ extension StickBluetoothClient: CBPeripheralDelegate {
             deviceInfo.rawInfo = String(data: data, encoding: .utf8) ?? "\(data.count) bytes"
         } else if characteristic.uuid == CBUUID(string: config.audioCharacteristicUUID) {
             deviceInfo.audioChunkCount += 1
+            if deviceInfo.audioChunkCount == 1 || deviceInfo.audioChunkCount.isMultiple(of: 25) {
+                logStore.append(.info, "Received audio chunk \(deviceInfo.audioChunkCount): \(data.count) bytes")
+            }
             audioReceiver?.handleAudioChunk(data)
         }
     }

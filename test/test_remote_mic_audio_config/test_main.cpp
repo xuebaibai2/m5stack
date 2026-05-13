@@ -5,7 +5,7 @@
 
 void test_remote_mic_codec_adc_volume_keeps_headroom() {
   TEST_ASSERT_EQUAL_HEX8(0x17, remoteMicCodecAdcVolumeRegister());
-  TEST_ASSERT_EQUAL_HEX8(0xB3, remoteMicCodecAdcVolumeValue());
+  TEST_ASSERT_EQUAL_HEX8(0x9F, remoteMicCodecAdcVolumeValue());
 }
 
 void setup() {

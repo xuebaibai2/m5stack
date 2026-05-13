@@ -1,18 +1,92 @@
+import AppKit
+import Combine
 import SwiftUI
 import StickLinkCore
 
 @main
 struct StickLinkMenuBarApp: App {
-    @StateObject private var appModel = StickLinkAppModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            StickLinkRootView(model: appModel)
-                .frame(width: 420)
-        } label: {
-            Label("Stick Link", systemImage: appModel.client.state.isConnected ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusController: StatusItemController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        statusController = StatusItemController(model: StickLinkAppModel())
+    }
+}
+
+final class StatusItemController: NSObject {
+    private let model: StickLinkAppModel
+    private let statusItem: NSStatusItem
+    private let popover = NSPopover()
+    private var stateCancellable: AnyCancellable?
+
+    init(model: StickLinkAppModel) {
+        self.model = model
+        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
+
+        popover.behavior = .applicationDefined
+        popover.contentSize = NSSize(width: 420, height: 640)
+        popover.contentViewController = NSHostingController(
+            rootView: StickLinkRootView(
+                model: model,
+                onClose: { [weak self] in self?.closePopover() }
+            )
+            .frame(width: 420)
+        )
+
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(togglePopover)
+        }
+
+        stateCancellable = model.client.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusIcon()
+            }
+        updateStatusIcon()
+    }
+
+    @objc private func togglePopover() {
+        if popover.isShown {
+            closePopover()
+        } else {
+            showPopover()
+        }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem.button else {
+            return
+        }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
+    private func closePopover() {
+        popover.performClose(nil)
+    }
+
+    private func updateStatusIcon() {
+        guard let button = statusItem.button else {
+            return
+        }
+
+        let symbolName = model.client.state.isConnected
+            ? "dot.radiowaves.left.and.right"
+            : "antenna.radiowaves.left.and.right.slash"
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Stick Link")
+        button.imagePosition = .imageOnly
     }
 }
 
@@ -67,6 +141,7 @@ final class StickLinkAppModel: ObservableObject {
 
 struct StickLinkRootView: View {
     @ObservedObject var model: StickLinkAppModel
+    let onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -92,6 +167,8 @@ struct StickLinkRootView: View {
 
             HStack {
                 Spacer()
+                Button("Close", action: onClose)
+                    .keyboardShortcut(.cancelAction)
                 Button("Quit") {
                     NSApplication.shared.terminate(nil)
                 }

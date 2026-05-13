@@ -12,7 +12,7 @@ constexpr uint8_t remoteMicCodecAdcVolumeRegister() {
 }
 
 constexpr uint8_t remoteMicCodecAdcVolumeValue() {
-  return 0xB3;
+  return 0x9F;
 }
 
 constexpr uint32_t remoteMicCodecI2cFrequency() {
