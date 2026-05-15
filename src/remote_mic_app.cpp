@@ -12,6 +12,7 @@
 
 #include "remote_mic_audio_config.h"
 #include "stick_link_protocol.h"
+#include "weather_app.h"
 
 namespace {
 
@@ -63,6 +64,12 @@ int8_t completedCaptureBuffer = -1;
 bool lastCodecInputLevelOk = false;
 uint8_t lastCodecInputLevelReadback = 0;
 uint8_t primingChunksRemaining = 0;
+volatile bool weatherConfigCommandPending = false;
+char pendingWeatherLocationName[32] = "";
+char pendingWeatherLatitude[18] = "";
+char pendingWeatherLongitude[18] = "";
+char pendingWeatherTimezone[40] = "";
+portMUX_TYPE commandMux = portMUX_INITIALIZER_UNLOCKED;
 
 class RemoteMicServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
@@ -78,6 +85,83 @@ class RemoteMicServerCallbacks : public BLEServerCallbacks {
     server->startAdvertising();
   }
 };
+
+void sendStickLinkEvent(const char* app, const char* type, const char* name,
+                        const char* text) {
+  ++sequenceNumber;
+  const String payload =
+      stickLinkEncodeEvent(app, type, name, text, millis(), sequenceNumber);
+  if (messageCharacteristic != nullptr) {
+    messageCharacteristic->setValue(payload.c_str());
+    if (bleConnected) {
+      messageCharacteristic->notify();
+    }
+  }
+  Serial.println(payload);
+}
+
+class StickLinkCommandCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* characteristic) override {
+    const std::string value = characteristic->getValue();
+    if (value.empty()) {
+      return;
+    }
+
+    JsonDocument doc;
+    const DeserializationError error =
+        deserializeJson(doc, value.data(), value.size());
+    if (error) {
+      Serial.println("Stick Link command JSON decode failed");
+      return;
+    }
+
+    const char* app = doc["app"] | "";
+    const char* type = doc["type"] | "";
+    const char* name = doc["name"] | "";
+    if (strcmp(app, "weather") == 0 && strcmp(type, "config") == 0 &&
+        strcmp(name, "set_location") == 0) {
+      portENTER_CRITICAL(&commandMux);
+      strlcpy(pendingWeatherLocationName, doc["location_name"] | "",
+              sizeof(pendingWeatherLocationName));
+      strlcpy(pendingWeatherLatitude, doc["latitude"] | "",
+              sizeof(pendingWeatherLatitude));
+      strlcpy(pendingWeatherLongitude, doc["longitude"] | "",
+              sizeof(pendingWeatherLongitude));
+      strlcpy(pendingWeatherTimezone, doc["timezone"] | "",
+              sizeof(pendingWeatherTimezone));
+      weatherConfigCommandPending = true;
+      portEXIT_CRITICAL(&commandMux);
+      return;
+    }
+
+    Serial.println("Unknown Stick Link BLE command");
+  }
+};
+
+void processPendingCommands() {
+  if (!weatherConfigCommandPending) {
+    return;
+  }
+
+  char locationName[sizeof(pendingWeatherLocationName)];
+  char latitude[sizeof(pendingWeatherLatitude)];
+  char longitude[sizeof(pendingWeatherLongitude)];
+  char timezone[sizeof(pendingWeatherTimezone)];
+
+  portENTER_CRITICAL(&commandMux);
+  strlcpy(locationName, pendingWeatherLocationName, sizeof(locationName));
+  strlcpy(latitude, pendingWeatherLatitude, sizeof(latitude));
+  strlcpy(longitude, pendingWeatherLongitude, sizeof(longitude));
+  strlcpy(timezone, pendingWeatherTimezone, sizeof(timezone));
+  weatherConfigCommandPending = false;
+  portEXIT_CRITICAL(&commandMux);
+
+  const bool ok =
+      weatherAppApplyRemoteConfig(locationName, latitude, longitude, timezone);
+  sendStickLinkEvent("weather", "config", ok ? "saved" : "save_failed",
+                     ok ? "Weather location updated"
+                        : "Weather location update failed");
+}
 
 String deviceInfoJson() {
   JsonDocument doc;
@@ -368,7 +452,9 @@ void remoteMicAppBegin() {
 
   messageCharacteristic = service->createCharacteristic(
       kStickLinkMessageCharacteristicUuid,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY |
+          BLECharacteristic::PROPERTY_WRITE);
+  messageCharacteristic->setCallbacks(new StickLinkCommandCallbacks());
   messageCharacteristic->addDescriptor(new BLE2902());
   messageCharacteristic->setValue("ready");
 
@@ -397,6 +483,8 @@ void remoteMicAppStart() {
 }
 
 void remoteMicAppUpdate() {
+  processPendingCommands();
+
   if (appVisible && !remoteMicInputReady) {
     startRemoteMicInput();
   }
@@ -421,6 +509,10 @@ void remoteMicAppUpdate() {
   }
 }
 
+void remoteMicAppPoll() {
+  processPendingCommands();
+}
+
 void remoteMicAppStartRecording() {
   if (recording) {
     return;
@@ -441,7 +533,6 @@ void remoteMicAppStartRecording() {
            remoteMicCodecAdcVolumeValue(), lastCodecInputLevelReadback);
   const String payload =
       stickLinkEncodeVoiceEvent("start", startText, lastSendAt, sequenceNumber);
-
   if (messageCharacteristic != nullptr) {
     messageCharacteristic->setValue(payload.c_str());
     if (bleConnected) {

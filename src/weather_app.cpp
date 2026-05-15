@@ -5,6 +5,7 @@
 #include <HTTPClient.h>
 #include <M5GFX.h>
 #include <M5Unified.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 
@@ -16,13 +17,17 @@ namespace {
 constexpr uint32_t kConnectTimeoutMs = 8000;
 constexpr uint32_t kConnectPollMs = 250;
 constexpr uint32_t kHttpTimeoutMs = 8000;
-constexpr uint32_t kAnimationFrameMs = 220;
+constexpr uint32_t kAnimationFrameMs = 80;
 constexpr int kIconCenterX = 52;
 constexpr int kIconCenterY = 76;
 constexpr int kIconBoxX = 0;
 constexpr int kIconBoxY = 36;
-constexpr int kIconBoxW = 100;
+constexpr int kIconBoxW = 116;
 constexpr int kIconBoxH = 92;
+constexpr int kWeatherValueX = 120;
+constexpr size_t kWeatherLocationNameMaxLen = 32;
+constexpr size_t kWeatherCoordinateMaxLen = 18;
+constexpr size_t kWeatherTimezoneMaxLen = 40;
 
 enum class WeatherState {
   Idle,
@@ -48,14 +53,86 @@ struct WeatherData {
   WeatherIcon icon = WeatherIcon::Cloudy;
 };
 
+struct WeatherConfig {
+  char locationName[kWeatherLocationNameMaxLen] = "";
+  char latitude[kWeatherCoordinateMaxLen] = "";
+  char longitude[kWeatherCoordinateMaxLen] = "";
+  char timezone[kWeatherTimezoneMaxLen] = "";
+};
+
 WeatherState weatherState = WeatherState::Idle;
 WeatherData weather;
+WeatherConfig weatherConfig;
+M5Canvas weatherIconCanvas(&M5.Display);
 bool wifiStarted = false;
+bool appVisible = false;
+bool weatherIconCanvasReady = false;
 uint32_t stateStartedAt = 0;
 uint32_t lastConnectCheckAt = 0;
 uint32_t lastAnimationAt = 0;
 uint8_t animationFrame = 0;
 char weatherError[64] = "";
+
+void copyConfigValue(char* destination, size_t destinationSize,
+                     const char* source) {
+  if (destinationSize == 0) {
+    return;
+  }
+  strlcpy(destination, source == nullptr ? "" : source, destinationSize);
+}
+
+void loadDefaultWeatherConfig() {
+  copyConfigValue(weatherConfig.locationName, sizeof(weatherConfig.locationName),
+                  kWeatherLocationName);
+  copyConfigValue(weatherConfig.latitude, sizeof(weatherConfig.latitude),
+                  kWeatherLatitude);
+  copyConfigValue(weatherConfig.longitude, sizeof(weatherConfig.longitude),
+                  kWeatherLongitude);
+  copyConfigValue(weatherConfig.timezone, sizeof(weatherConfig.timezone),
+                  kWeatherTimezone);
+}
+
+void loadWeatherPreferences() {
+  loadDefaultWeatherConfig();
+
+  Preferences preferences;
+  if (!preferences.begin("weather", true)) {
+    Serial.println("Weather config: using generated defaults");
+    return;
+  }
+
+  String value = preferences.getString("name", weatherConfig.locationName);
+  copyConfigValue(weatherConfig.locationName, sizeof(weatherConfig.locationName),
+                  value.c_str());
+  value = preferences.getString("lat", weatherConfig.latitude);
+  copyConfigValue(weatherConfig.latitude, sizeof(weatherConfig.latitude),
+                  value.c_str());
+  value = preferences.getString("lon", weatherConfig.longitude);
+  copyConfigValue(weatherConfig.longitude, sizeof(weatherConfig.longitude),
+                  value.c_str());
+  value = preferences.getString("tz", weatherConfig.timezone);
+  copyConfigValue(weatherConfig.timezone, sizeof(weatherConfig.timezone),
+                  value.c_str());
+  preferences.end();
+
+  Serial.printf("Weather config loaded: %s %s,%s %s\n",
+                weatherConfig.locationName, weatherConfig.latitude,
+                weatherConfig.longitude, weatherConfig.timezone);
+}
+
+bool saveWeatherPreferences() {
+  Preferences preferences;
+  if (!preferences.begin("weather", false)) {
+    return false;
+  }
+
+  const bool ok = preferences.putString("name", weatherConfig.locationName) > 0 &&
+                  preferences.putString("lat", weatherConfig.latitude) > 0 &&
+                  preferences.putString("lon", weatherConfig.longitude) > 0 &&
+                  preferences.putString("tz", weatherConfig.timezone) > 0;
+  preferences.end();
+  return ok;
+}
 
 bool wifiCredentialsConfigured() {
   return strcmp(kWifiSsid, "YOUR_WIFI_SSID") != 0 &&
@@ -79,78 +156,99 @@ void drawWeatherShell() {
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(8, 8);
-  M5.Display.print("Sydney");
+  M5.Display.print(weatherConfig.locationName);
   statusBarReset();
   statusBarDraw();
 }
 
-void drawSunIcon(int cx, int cy, uint8_t frame) {
-  const int pulse = frame % 2;
-  M5.Display.fillCircle(cx, cy, 18 + pulse, TFT_YELLOW);
+void ensureWeatherIconCanvas() {
+  if (weatherIconCanvasReady) {
+    return;
+  }
+
+  weatherIconCanvas.setColorDepth(16);
+  weatherIconCanvas.createSprite(kIconBoxW, kIconBoxH);
+  weatherIconCanvasReady = true;
+}
+
+template <typename Gfx>
+void drawSunIcon(Gfx& gfx, int cx, int cy, uint8_t frame) {
+  const int pulse = (frame / 6) % 2;
+  gfx.fillCircle(cx, cy, 18 + pulse, TFT_YELLOW);
   const int inner = 24 + pulse;
   const int outer = 32 + pulse;
-  M5.Display.drawLine(cx, cy - outer, cx, cy - inner, TFT_YELLOW);
-  M5.Display.drawLine(cx, cy + inner, cx, cy + outer, TFT_YELLOW);
-  M5.Display.drawLine(cx - outer, cy, cx - inner, cy, TFT_YELLOW);
-  M5.Display.drawLine(cx + inner, cy, cx + outer, cy, TFT_YELLOW);
-  M5.Display.drawLine(cx - 23, cy - 23, cx - 17, cy - 17, TFT_ORANGE);
-  M5.Display.drawLine(cx + 17, cy + 17, cx + 23, cy + 23, TFT_ORANGE);
-  M5.Display.drawLine(cx + 17, cy - 17, cx + 23, cy - 23, TFT_ORANGE);
-  M5.Display.drawLine(cx - 23, cy + 23, cx - 17, cy + 17, TFT_ORANGE);
+  gfx.drawLine(cx, cy - outer, cx, cy - inner, TFT_YELLOW);
+  gfx.drawLine(cx, cy + inner, cx, cy + outer, TFT_YELLOW);
+  gfx.drawLine(cx - outer, cy, cx - inner, cy, TFT_YELLOW);
+  gfx.drawLine(cx + inner, cy, cx + outer, cy, TFT_YELLOW);
+  gfx.drawLine(cx - 23, cy - 23, cx - 17, cy - 17, TFT_ORANGE);
+  gfx.drawLine(cx + 17, cy + 17, cx + 23, cy + 23, TFT_ORANGE);
+  gfx.drawLine(cx + 17, cy - 17, cx + 23, cy - 23, TFT_ORANGE);
+  gfx.drawLine(cx - 23, cy + 23, cx - 17, cy + 17, TFT_ORANGE);
 }
 
-void drawCloudIcon(int cx, int cy, uint8_t frame,
+template <typename Gfx>
+void drawCloudIcon(Gfx& gfx, int cx, int cy, uint8_t frame,
                    uint16_t color = TFT_LIGHTGREY) {
-  const int drift = static_cast<int>(frame % 4) - 1;
+  const uint8_t phase = frame % 24;
+  const int drift = phase < 12 ? (static_cast<int>(phase) / 3)
+                               : (static_cast<int>(23 - phase) / 3);
   cx += drift;
-  M5.Display.fillCircle(cx - 17, cy + 6, 14, color);
-  M5.Display.fillCircle(cx, cy - 2, 19, color);
-  M5.Display.fillCircle(cx + 20, cy + 7, 13, color);
-  M5.Display.fillRoundRect(cx - 34, cy + 5, 68, 20, 10, color);
+  gfx.fillCircle(cx - 17, cy + 6, 14, color);
+  gfx.fillCircle(cx, cy - 2, 19, color);
+  gfx.fillCircle(cx + 20, cy + 7, 13, color);
+  gfx.fillRoundRect(cx - 34, cy + 5, 68, 20, 10, color);
 }
 
-void drawRainIcon(int cx, int cy, uint8_t frame) {
-  drawCloudIcon(cx, cy - 8, frame, TFT_LIGHTGREY);
-  const int dropOffset = (frame % 3) * 4;
+template <typename Gfx>
+void drawRainIcon(Gfx& gfx, int cx, int cy, uint8_t frame) {
+  drawCloudIcon(gfx, cx, cy - 8, frame, TFT_LIGHTGREY);
+  const int dropOffset = frame % 12;
   for (int i = -24; i <= 24; i += 16) {
     const int y = cy + 22 + dropOffset;
-    M5.Display.drawLine(cx + i, y, cx + i - 4, y + 12, TFT_CYAN);
-    M5.Display.drawLine(cx + i + 1, y, cx + i - 3, y + 12, TFT_CYAN);
+    gfx.drawLine(cx + i, y, cx + i - 4, y + 12, TFT_CYAN);
+    gfx.drawLine(cx + i + 1, y, cx + i - 3, y + 12, TFT_CYAN);
   }
 }
 
-void drawWindIcon(int cx, int cy, uint8_t frame) {
-  const int shift = (frame % 4) * 4;
+template <typename Gfx>
+void drawWindIcon(Gfx& gfx, int cx, int cy, uint8_t frame) {
+  const int shift = frame % 18;
   for (int row = 0; row < 3; ++row) {
     const int y = cy - 18 + row * 22;
     const int x = cx - 44 + ((shift + row * 7) % 18);
     const int width = row == 1 ? 82 : 64;
-    M5.Display.drawFastHLine(x, y, width, TFT_SKYBLUE);
-    M5.Display.drawFastHLine(x + 8, y + 6, width - 26, TFT_SKYBLUE);
-    M5.Display.drawCircle(x + width, y + 3, 6, TFT_SKYBLUE);
+    gfx.drawFastHLine(x, y, width, TFT_SKYBLUE);
+    gfx.drawFastHLine(x + 8, y + 6, width - 26, TFT_SKYBLUE);
+    gfx.drawCircle(x + width, y + 3, 6, TFT_SKYBLUE);
   }
 }
 
-void drawWeatherIcon(WeatherIcon icon, int cx, int cy, uint8_t frame) {
+template <typename Gfx>
+void drawWeatherIcon(Gfx& gfx, WeatherIcon icon, int cx, int cy,
+                     uint8_t frame) {
   switch (icon) {
     case WeatherIcon::Sunny:
-      drawSunIcon(cx, cy, frame);
+      drawSunIcon(gfx, cx, cy, frame);
       break;
     case WeatherIcon::Cloudy:
-      drawCloudIcon(cx, cy, frame);
+      drawCloudIcon(gfx, cx, cy, frame);
       break;
     case WeatherIcon::Rainy:
-      drawRainIcon(cx, cy, frame);
+      drawRainIcon(gfx, cx, cy, frame);
       break;
     case WeatherIcon::Windy:
-      drawWindIcon(cx, cy, frame);
+      drawWindIcon(gfx, cx, cy, frame);
       break;
   }
 }
 
 void drawWeatherIconFrame() {
-  M5.Display.fillRect(kIconBoxX, kIconBoxY, kIconBoxW, kIconBoxH, TFT_BLACK);
-  drawWeatherIcon(weather.icon, kIconCenterX, kIconCenterY, animationFrame);
+  ensureWeatherIconCanvas();
+  weatherIconCanvas.fillSprite(TFT_BLACK);
+  drawWeatherIcon(weatherIconCanvas, weather.icon, kIconCenterX - kIconBoxX,
+                  kIconCenterY - kIconBoxY, animationFrame);
+  weatherIconCanvas.pushSprite(kIconBoxX, kIconBoxY);
 }
 
 WeatherIcon iconForWeather(int code, float windKmh) {
@@ -218,16 +316,16 @@ void drawWeatherReady() {
 
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setTextSize(3);
-  M5.Display.setCursor(102, 42);
+  M5.Display.setCursor(kWeatherValueX, 42);
   M5.Display.printf("%.0fC", weather.temperatureC);
 
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(102, 74);
+  M5.Display.setCursor(kWeatherValueX, 74);
   M5.Display.print(weather.condition);
 
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(TFT_SKYBLUE, TFT_BLACK);
-  M5.Display.setCursor(102, 104);
+  M5.Display.setCursor(kWeatherValueX, 104);
   M5.Display.printf("%.0f km/h", weather.windKmh);
 }
 
@@ -244,14 +342,14 @@ void drawWeatherMessage(const char* title, const char* detail) {
 }
 
 String weatherUrl() {
-  String timezone = kWeatherTimezone;
+  String timezone = weatherConfig.timezone;
   timezone.replace("/", "%2F");
 
   String url = "https://api.open-meteo.com/v1/forecast?";
   url += "latitude=";
-  url += kWeatherLatitude;
+  url += weatherConfig.latitude;
   url += "&longitude=";
-  url += kWeatherLongitude;
+  url += weatherConfig.longitude;
   url += "&current=temperature_2m,wind_speed_10m,weather_code";
   url += "&timezone=";
   url += timezone;
@@ -345,7 +443,7 @@ void beginFetch() {
 
   if (WiFi.status() == WL_CONNECTED) {
     weatherState = WeatherState::Fetching;
-    drawWeatherMessage("Updating", "Fetching Sydney weather");
+    drawWeatherMessage("Updating", "Fetching weather");
     return;
   }
 
@@ -356,10 +454,12 @@ void beginFetch() {
 }  // namespace
 
 void weatherAppBegin() {
+  loadWeatherPreferences();
   ensureWifiStarted();
 }
 
 void weatherAppStart() {
+  appVisible = true;
   beginFetch();
 }
 
@@ -371,14 +471,13 @@ void weatherAppUpdate() {
     case WeatherState::Connecting:
       if (WiFi.status() == WL_CONNECTED) {
         weatherState = WeatherState::Fetching;
-        drawWeatherMessage("Updating", "Fetching Sydney weather");
+        drawWeatherMessage("Updating", "Fetching weather");
       } else if (now - stateStartedAt >= kConnectTimeoutMs) {
         WiFi.disconnect(false);
         weatherState = WeatherState::Offline;
         drawWeatherMessage("Offline", "WiFi unavailable");
       } else if (now - lastConnectCheckAt >= kConnectPollMs) {
         lastConnectCheckAt = now;
-        drawWeatherMessage("Connecting WiFi", "Please wait");
       }
       break;
 
@@ -412,8 +511,43 @@ void weatherAppRefresh() {
 
 void weatherAppStop() {
   weatherState = WeatherState::Idle;
+  appVisible = false;
 }
 
 bool weatherAppWifiConnected() {
   return WiFi.status() == WL_CONNECTED;
+}
+
+bool weatherAppApplyRemoteConfig(const char* locationName, const char* latitude,
+                                 const char* longitude, const char* timezone) {
+  if (locationName == nullptr || latitude == nullptr || longitude == nullptr ||
+      timezone == nullptr || strlen(locationName) == 0 ||
+      strlen(latitude) == 0 || strlen(longitude) == 0 || strlen(timezone) == 0) {
+    snprintf(weatherError, sizeof(weatherError), "Bad weather config");
+    Serial.println(weatherError);
+    return false;
+  }
+
+  copyConfigValue(weatherConfig.locationName, sizeof(weatherConfig.locationName),
+                  locationName);
+  copyConfigValue(weatherConfig.latitude, sizeof(weatherConfig.latitude),
+                  latitude);
+  copyConfigValue(weatherConfig.longitude, sizeof(weatherConfig.longitude),
+                  longitude);
+  copyConfigValue(weatherConfig.timezone, sizeof(weatherConfig.timezone),
+                  timezone);
+
+  if (!saveWeatherPreferences()) {
+    snprintf(weatherError, sizeof(weatherError), "Save config failed");
+    Serial.println(weatherError);
+    return false;
+  }
+
+  Serial.printf("Weather config saved: %s %s,%s %s\n",
+                weatherConfig.locationName, weatherConfig.latitude,
+                weatherConfig.longitude, weatherConfig.timezone);
+  if (appVisible) {
+    beginFetch();
+  }
+  return true;
 }

@@ -136,6 +136,60 @@ func validatePcm16LevelStats() throws {
     try expect(stats.rms > 0, "PCM level stats computes RMS")
 }
 
+func validateFirmwareConfigStore() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("StickLinkValidation-\(UUID().uuidString)")
+    let envURL = directory.appendingPathComponent(".env")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try """
+    # local firmware config
+    WIFI_SSID=Lab
+    WEATHER_LATITUDE=-33
+    WEATHER_LONGITUDE=151
+    WEATHER_TIMEZONE=Australia/Sydney
+    UNRELATED=value
+    """.write(to: envURL, atomically: true, encoding: .utf8)
+
+    let store = FirmwareConfigStore(envURL: envURL)
+    try expect(store.config.wifiSSID == "Lab", "firmware config loads Wi-Fi SSID")
+    try expect(store.config.weatherLocationName == "Sydney", "firmware config supplies default location name")
+
+    store.config.weatherLocationName = "Melbourne"
+    store.config.weatherLatitude = "-37.8136"
+    store.config.weatherLongitude = "144.9631"
+    store.config.wifiPassword = "secret"
+    store.save()
+
+    let saved = try String(contentsOf: envURL, encoding: .utf8)
+    try expect(saved.contains("WEATHER_LOCATION_NAME=\"Melbourne\""), "firmware config saves location name")
+    try expect(saved.contains("WEATHER_LATITUDE=\"-37.8136\""), "firmware config saves latitude")
+    try expect(saved.contains("WEATHER_LONGITUDE=\"144.9631\""), "firmware config saves longitude")
+    try expect(saved.contains("WIFI_PASSWORD=\"secret\""), "firmware config saves Wi-Fi password")
+    try expect(saved.contains("UNRELATED=value"), "firmware config preserves unrelated keys")
+}
+
+func validateWeatherConfigCommand() throws {
+    let config = FirmwareConfig(
+        weatherLocationName: "Melbourne",
+        weatherLatitude: "-37.8136",
+        weatherLongitude: "144.9631",
+        weatherTimezone: "Australia/Melbourne"
+    )
+    let data = try StickBluetoothClient.weatherConfigCommandData(for: config)
+    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+    try expect(json?["v"] as? Int == 1, "weather config command has protocol version")
+    try expect(json?["app"] as? String == "weather", "weather config command targets weather app")
+    try expect(json?["type"] as? String == "config", "weather config command has config type")
+    try expect(json?["name"] as? String == "set_location", "weather config command uses set_location")
+    try expect(json?["location_name"] as? String == "Melbourne", "weather config command includes location name")
+    try expect(json?["latitude"] as? String == "-37.8136", "weather config command includes latitude")
+    try expect(json?["longitude"] as? String == "144.9631", "weather config command includes longitude")
+    try expect(json?["timezone"] as? String == "Australia/Melbourne", "weather config command includes timezone")
+}
+
 func validateLogStore() throws {
     let store = LogStore(maxCount: 2)
     store.append(LogStore.info("first"))
@@ -169,6 +223,8 @@ do {
     try validateRemoteMicSessionTracker()
     try validateRemoteMicRecordingNamer()
     try validatePcm16LevelStats()
+    try validateFirmwareConfigStore()
+    try validateWeatherConfigCommand()
     print("StickLinkValidation passed")
 } catch {
     fputs("StickLinkValidation failed: \(error)\n", stderr)

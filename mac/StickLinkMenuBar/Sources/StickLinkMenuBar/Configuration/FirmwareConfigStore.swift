@@ -1,0 +1,198 @@
+import Combine
+import Foundation
+
+public struct FirmwareConfig: Equatable {
+    public var wifiSSID: String
+    public var wifiPassword: String
+    public var weatherLocationName: String
+    public var weatherLatitude: String
+    public var weatherLongitude: String
+    public var weatherTimezone: String
+
+    public init(
+        wifiSSID: String = "YOUR_WIFI_SSID",
+        wifiPassword: String = "YOUR_WIFI_PASSWORD",
+        weatherLocationName: String = "Sydney",
+        weatherLatitude: String = "-33.8688",
+        weatherLongitude: String = "151.2093",
+        weatherTimezone: String = "Australia/Sydney"
+    ) {
+        self.wifiSSID = wifiSSID
+        self.wifiPassword = wifiPassword
+        self.weatherLocationName = weatherLocationName
+        self.weatherLatitude = weatherLatitude
+        self.weatherLongitude = weatherLongitude
+        self.weatherTimezone = weatherTimezone
+    }
+}
+
+public final class FirmwareConfigStore: ObservableObject {
+    public let envURL: URL
+    @Published public var config: FirmwareConfig
+    @Published public private(set) var statusMessage: String
+
+    public init(envURL: URL = FirmwareConfigStore.defaultEnvURL()) {
+        self.envURL = envURL
+        self.config = FirmwareConfig()
+        self.statusMessage = ""
+        load()
+    }
+
+    public static func defaultEnvURL(
+        currentDirectory: String = FileManager.default.currentDirectoryPath
+    ) -> URL {
+        let fileManager = FileManager.default
+        var directory = URL(fileURLWithPath: currentDirectory).standardizedFileURL
+
+        for _ in 0..<8 {
+            let platformIO = directory.appendingPathComponent("platformio.ini")
+            let envFile = directory.appendingPathComponent(".env")
+            if fileManager.fileExists(atPath: platformIO.path) ||
+                fileManager.fileExists(atPath: envFile.path) {
+                return envFile
+            }
+
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path {
+                break
+            }
+            directory = parent
+        }
+
+        return URL(fileURLWithPath: currentDirectory)
+            .appendingPathComponent("../../.env")
+            .standardizedFileURL
+    }
+
+    public func load() {
+        do {
+            let values = try EnvFile.readValues(from: envURL)
+            config = FirmwareConfig(
+                wifiSSID: values["WIFI_SSID"] ?? "YOUR_WIFI_SSID",
+                wifiPassword: values["WIFI_PASSWORD"] ?? "YOUR_WIFI_PASSWORD",
+                weatherLocationName: values["WEATHER_LOCATION_NAME"] ?? "Sydney",
+                weatherLatitude: values["WEATHER_LATITUDE"] ?? "-33.8688",
+                weatherLongitude: values["WEATHER_LONGITUDE"] ?? "151.2093",
+                weatherTimezone: values["WEATHER_TIMEZONE"] ?? "Australia/Sydney"
+            )
+            statusMessage = FileManager.default.fileExists(atPath: envURL.path)
+                ? "Loaded \(envURL.lastPathComponent)"
+                : "Using defaults; .env will be created on save"
+        } catch {
+            statusMessage = "Load failed: \(error.localizedDescription)"
+        }
+    }
+
+    public func save() {
+        do {
+            try EnvFile.upsert(
+                values: [
+                    "WIFI_SSID": config.wifiSSID,
+                    "WIFI_PASSWORD": config.wifiPassword,
+                    "WEATHER_LOCATION_NAME": config.weatherLocationName,
+                    "WEATHER_LATITUDE": config.weatherLatitude,
+                    "WEATHER_LONGITUDE": config.weatherLongitude,
+                    "WEATHER_TIMEZONE": config.weatherTimezone
+                ],
+                to: envURL
+            )
+            statusMessage = "Saved .env; rebuild and upload firmware to apply"
+        } catch {
+            statusMessage = "Save failed: \(error.localizedDescription)"
+        }
+    }
+}
+
+private enum EnvFile {
+    static func readValues(from url: URL) throws -> [String: String] {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return [:]
+        }
+
+        let text = try String(contentsOf: url, encoding: .utf8)
+        var values: [String: String] = [:]
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            guard let parsed = parse(rawLine: String(rawLine)) else {
+                continue
+            }
+            values[parsed.key] = parsed.value
+        }
+        return values
+    }
+
+    static func upsert(values: [String: String], to url: URL) throws {
+        var lines: [String] = []
+        if FileManager.default.fileExists(atPath: url.path) {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        } else {
+            lines = [
+                "# Generated by StickLinkMenuBar.",
+                "# Rebuild and upload firmware after changing these values.",
+                ""
+            ]
+        }
+
+        var remaining = Set(values.keys)
+        lines = lines.map { line in
+            guard let parsed = parse(rawLine: line),
+                  let value = values[parsed.key] else {
+                return line
+            }
+
+            remaining.remove(parsed.key)
+            return "\(parsed.key)=\(quote(value))"
+        }
+
+        if !remaining.isEmpty {
+            if lines.last?.isEmpty == false {
+                lines.append("")
+            }
+            for key in remaining.sorted() {
+                lines.append("\(key)=\(quote(values[key] ?? ""))")
+            }
+        }
+
+        let parent = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private static func parse(rawLine: String) -> (key: String, value: String)? {
+        let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("#"),
+              let separator = trimmed.firstIndex(of: "=") else {
+            return nil
+        }
+
+        let key = String(trimmed[..<separator]).trimmingCharacters(in: .whitespaces)
+        let rawValue = String(trimmed[trimmed.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else {
+            return nil
+        }
+
+        return (key, unquote(rawValue))
+    }
+
+    private static func quote(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func unquote(_ value: String) -> String {
+        guard value.count >= 2 else {
+            return value
+        }
+
+        let first = value.first
+        let last = value.last
+        if (first == "\"" && last == "\"") || (first == "'" && last == "'") {
+            return String(value.dropFirst().dropLast())
+                .replacingOccurrences(of: "\\\"", with: "\"")
+                .replacingOccurrences(of: "\\\\", with: "\\")
+        }
+        return value
+    }
+}

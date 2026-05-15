@@ -27,6 +27,7 @@ Properties:
 
 - `read`
 - `notify`
+- `write`
 
 Device info characteristic UUID:
 
@@ -97,6 +98,32 @@ Fields:
 Consumers must ignore unknown fields. Audio uses the separate audio
 characteristic; the message characteristic is intended for small control events
 and metadata.
+
+## Mac To StickS3 Commands
+
+The macOS app may write a small UTF-8 JSON command to the message
+characteristic. The StickS3 responds with a normal notification event on the
+same characteristic.
+
+Weather location update:
+
+```json
+{
+  "v": 1,
+  "app": "weather",
+  "type": "config",
+  "name": "set_location",
+  "text": "Set weather location",
+  "location_name": "Melbourne",
+  "latitude": "-37.8136",
+  "longitude": "144.9631",
+  "timezone": "Australia/Melbourne"
+}
+```
+
+The StickS3 persists the location in NVS and refreshes the Weather app
+immediately when it is visible. Future Weather app launches use the saved NVS
+location before falling back to `generated_config.h`.
 
 ## Remote Mic Events
 

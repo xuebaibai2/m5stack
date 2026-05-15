@@ -175,6 +175,7 @@ void setup() {
 
 void loop() {
   M5.update();
+  remoteMicAppPoll();
 
   switch (currentScreen) {
     case Screen::Menu:

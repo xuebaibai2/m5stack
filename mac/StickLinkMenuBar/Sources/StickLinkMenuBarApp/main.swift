@@ -96,6 +96,7 @@ final class StickLinkAppModel: ObservableObject {
     let logStore: LogStore
     let client: StickBluetoothClient
     let transcriber: RemoteMicTranscriber
+    let firmwareConfigStore: FirmwareConfigStore
 
     init(configURL: URL = StickLinkConfig.defaultConfigURL()) {
         self.configURL = configURL
@@ -108,6 +109,7 @@ final class StickLinkAppModel: ObservableObject {
 
         self.config = loadedConfig
         self.logStore = LogStore(maxCount: loadedConfig.maxRetainedLogs)
+        self.firmwareConfigStore = FirmwareConfigStore()
         let outputController = TextOutputController(logStore: logStore)
         self.transcriber = RemoteMicTranscriber(
             config: loadedConfig,
@@ -121,6 +123,10 @@ final class StickLinkAppModel: ObservableObject {
             logStore.append(.info, "Loaded config \(configURL.path)")
         } else {
             logStore.append(.warning, "Using default config; file not found at \(configURL.path)")
+        }
+
+        DispatchQueue.main.async { [client] in
+            client.startAutoConnect()
         }
     }
 
@@ -145,25 +151,35 @@ struct StickLinkRootView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            StatusView(
-                client: model.client,
-                onScan: { model.client.startScan() },
-                onDisconnect: { model.client.disconnect() }
-            )
+            TabView {
+                StickLinkStatusTab(model: model)
+                    .tabItem {
+                        Label("Status", systemImage: "dot.radiowaves.left.and.right")
+                    }
 
-            Divider()
+                WeatherFirmwareConfigView(
+                    store: model.firmwareConfigStore,
+                    onSendToStick: { model.client.sendWeatherConfig($0) }
+                )
+                    .tabItem {
+                        Label("Weather", systemImage: "cloud.sun")
+                    }
 
-            LogsView(logStore: model.logStore)
+                DeviceFirmwareConfigView(store: model.firmwareConfigStore)
+                    .tabItem {
+                        Label("Device", systemImage: "switch.2")
+                    }
 
-            TranscriptView(transcriber: model.transcriber)
-
-            Divider()
-
-            ConfigView(
-                config: model.config,
-                configURL: model.configURL,
-                onReload: { model.reloadConfig() }
-            )
+                ConfigView(
+                    config: model.config,
+                    configURL: model.configURL,
+                    onReload: { model.reloadConfig() }
+                )
+                .tabItem {
+                    Label("Mac", systemImage: "desktopcomputer")
+                }
+            }
+            .frame(minHeight: 560)
 
             HStack {
                 Spacer()
@@ -176,6 +192,29 @@ struct StickLinkRootView: View {
             }
         }
         .padding(16)
+    }
+}
+
+struct StickLinkStatusTab: View {
+    @ObservedObject var model: StickLinkAppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            StatusView(
+                client: model.client,
+                onScan: { model.client.startScan() },
+                onDisconnect: { model.client.disconnect() }
+            )
+
+            Divider()
+
+            LogsView(logStore: model.logStore)
+
+            TranscriptView(transcriber: model.transcriber)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 8)
     }
 }
 

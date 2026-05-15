@@ -71,6 +71,9 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
     private var deviceInfoCharacteristic: CBCharacteristic?
     private var audioCharacteristic: CBCharacteristic?
     private var scanTimer: Timer?
+    private var reconnectTimer: Timer?
+    private var shouldAutoScan = false
+    private var autoConnectEnabled = false
     public weak var audioReceiver: StickAudioReceiver?
 
     public init(config: StickLinkConfig, logStore: LogStore) {
@@ -86,6 +89,12 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
         logStore.append(.info, "Config reloaded")
     }
 
+    public func startAutoConnect() {
+        autoConnectEnabled = true
+        shouldAutoScan = true
+        startScan()
+    }
+
     public func startScan() {
         guard let central else {
             state = .failed("Bluetooth manager unavailable")
@@ -94,6 +103,8 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
 
         switch central.state {
         case .poweredOn:
+            shouldAutoScan = false
+            reconnectTimer?.invalidate()
             let service = CBUUID(string: config.serviceUUID)
             state = .scanning
             logStore.append(.info, "Scanning for \(config.serviceUUID)")
@@ -117,6 +128,8 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
     }
 
     public func disconnect() {
+        autoConnectEnabled = false
+        reconnectTimer?.invalidate()
         scanTimer?.invalidate()
         central?.stopScan()
         if let peripheral {
@@ -129,11 +142,62 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
         logStore.append(.info, "Disconnected")
     }
 
+    public func sendWeatherConfig(_ firmwareConfig: FirmwareConfig) {
+        guard let peripheral, let messageCharacteristic else {
+            logStore.append(.warning, "Weather config not sent: StickS3 is not connected")
+            return
+        }
+
+        guard messageCharacteristic.properties.contains(.write) ||
+            messageCharacteristic.properties.contains(.writeWithoutResponse) else {
+            logStore.append(.error, "Weather config not sent: message characteristic is not writable")
+            return
+        }
+
+        do {
+            let data = try StickBluetoothClient.weatherConfigCommandData(for: firmwareConfig)
+            let writeType: CBCharacteristicWriteType = messageCharacteristic.properties.contains(.write)
+                ? .withResponse
+                : .withoutResponse
+            peripheral.writeValue(data, for: messageCharacteristic, type: writeType)
+            logStore.append(.info, "Sent weather config to StickS3")
+        } catch {
+            logStore.append(.error, "Weather config encode failed: \(error.localizedDescription)")
+        }
+    }
+
+    public static func weatherConfigCommandData(for firmwareConfig: FirmwareConfig) throws -> Data {
+        let command = WeatherConfigCommand(
+            locationName: firmwareConfig.weatherLocationName,
+            latitude: firmwareConfig.weatherLatitude,
+            longitude: firmwareConfig.weatherLongitude,
+            timezone: firmwareConfig.weatherTimezone
+        )
+        return try JSONEncoder().encode(command)
+    }
+
     private func stopScanDueToTimeout() {
         central?.stopScan()
         if case .scanning = state {
             state = .failed("Scan timed out")
             logStore.append(.warning, "Scan timed out")
+            scheduleAutoReconnect(reason: "scan timed out")
+        }
+    }
+
+    private func scheduleAutoReconnect(reason: String) {
+        guard autoConnectEnabled else {
+            return
+        }
+
+        reconnectTimer?.invalidate()
+        logStore.append(.info, "Auto reconnect scheduled after \(reason)")
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+            guard let self else {
+                return
+            }
+            self.shouldAutoScan = true
+            self.startScan()
         }
     }
 
@@ -154,12 +218,39 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
     }
 }
 
+private struct WeatherConfigCommand: Encodable {
+    let version = 1
+    let app = "weather"
+    let type = "config"
+    let name = "set_location"
+    let text = "Set weather location"
+    let locationName: String
+    let latitude: String
+    let longitude: String
+    let timezone: String
+
+    enum CodingKeys: String, CodingKey {
+        case version = "v"
+        case app
+        case type
+        case name
+        case text
+        case locationName = "location_name"
+        case latitude
+        case longitude
+        case timezone
+    }
+}
+
 extension StickBluetoothClient: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
             if case .idle = state {
                 logStore.append(.info, "Bluetooth ready")
+            }
+            if shouldAutoScan {
+                startScan()
             }
         case .poweredOff:
             state = .poweredOff
@@ -207,15 +298,20 @@ extension StickBluetoothClient: CBCentralManagerDelegate {
     public func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         state = .failed(error?.localizedDescription ?? "Failed to connect")
         logStore.append(.error, "Connection failed")
+        scheduleAutoReconnect(reason: "connection failed")
     }
 
     public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         state = .disconnected
+        messageCharacteristic = nil
+        deviceInfoCharacteristic = nil
+        audioCharacteristic = nil
         if let error {
             logStore.append(.warning, "Disconnected: \(error.localizedDescription)")
         } else {
             logStore.append(.info, "Device disconnected")
         }
+        scheduleAutoReconnect(reason: "disconnect")
     }
 }
 
