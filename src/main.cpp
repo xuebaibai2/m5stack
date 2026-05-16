@@ -34,6 +34,7 @@ size_t runningApp = 0;
 bool buttonAHoldHandled = false;
 bool buttonBHoldHandled = false;
 bool remoteMicButtonAActive = false;
+bool codeBuddyLaunchButtonAActive = false;
 
 void drawMenu() {
   M5.Display.clear(TFT_BLACK);
@@ -95,6 +96,7 @@ void launchSelectedApp() {
   buttonAHoldHandled = false;
   buttonBHoldHandled = false;
   remoteMicButtonAActive = false;
+  codeBuddyLaunchButtonAActive = runningApp == 2 && M5.BtnA.isPressed();
   drawApp(runningApp);
 }
 
@@ -111,6 +113,7 @@ void returnToMenu() {
   buttonAHoldHandled = false;
   buttonBHoldHandled = false;
   remoteMicButtonAActive = false;
+  codeBuddyLaunchButtonAActive = false;
   drawMenu();
 }
 
@@ -160,6 +163,39 @@ void handleAppInput() {
     return;
   }
 
+  if (runningApp == 2) {
+    if (codeBuddyLaunchButtonAActive) {
+      if (!M5.BtnA.isPressed()) {
+        codeBuddyLaunchButtonAActive = false;
+      }
+      return;
+    }
+
+    if (M5.BtnPWR.wasClicked() || M5.Power.getKeyState() == 0x02) {
+      codeBuddyAppToggleScreen();
+      return;
+    }
+
+    if (codeBuddyAppScreenOff()) {
+      if (M5.BtnA.isPressed() || M5.BtnB.isPressed()) {
+        codeBuddyAppWake();
+      }
+      return;
+    }
+
+    if (consumeLongPress(M5.BtnA, buttonAHoldHandled)) {
+      returnToMenu();
+      return;
+    }
+
+    if (M5.BtnA.wasClicked()) {
+      codeBuddyAppButtonA();
+    } else if (M5.BtnB.wasClicked()) {
+      codeBuddyAppButtonB();
+    }
+    return;
+  }
+
   if (consumeLongPress(M5.BtnA, buttonAHoldHandled) ||
       consumeLongPress(M5.BtnB, buttonBHoldHandled)) {
     returnToMenu();
@@ -168,12 +204,6 @@ void handleAppInput() {
 
   if (runningApp == 0 && M5.BtnA.wasClicked()) {
     weatherAppRefresh();
-  } else if (runningApp == 2) {
-    if (M5.BtnA.wasClicked()) {
-      codeBuddyAppButtonA();
-    } else if (M5.BtnB.wasClicked()) {
-      codeBuddyAppButtonB();
-    }
   }
 }
 
@@ -183,6 +213,7 @@ void setup() {
   Serial.begin(115200);
 
   auto cfg = M5.config();
+  cfg.internal_imu = true;
   M5.begin(cfg);
 
   M5.Display.setRotation(1);

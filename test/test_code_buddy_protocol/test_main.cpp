@@ -36,6 +36,28 @@ void test_missing_prompt_clears_existing_prompt() {
   TEST_ASSERT_EQUAL_STRING("", state.promptHint);
 }
 
+void test_entries_update_transcript_state() {
+  CodeBuddyState state;
+
+  TEST_ASSERT_TRUE(codeBuddyApplyJson(
+      "{\"entries\":[\"first\",\"second\"],\"msg\":\"second\"}", state, 10));
+  TEST_ASSERT_EQUAL_UINT8(2, state.entryCount);
+  TEST_ASSERT_EQUAL_UINT16(1, state.entryGeneration);
+  TEST_ASSERT_EQUAL_STRING("first", state.entries[0]);
+  TEST_ASSERT_EQUAL_STRING("second", state.entries[1]);
+
+  TEST_ASSERT_TRUE(codeBuddyApplyJson(
+      "{\"entries\":[\"first\",\"second\"],\"msg\":\"second\"}", state, 20));
+  TEST_ASSERT_EQUAL_UINT16(1, state.entryGeneration);
+
+  TEST_ASSERT_TRUE(codeBuddyApplyJson(
+      "{\"entries\":[\"second\",\"third\"],\"msg\":\"third\"}", state, 30));
+  TEST_ASSERT_EQUAL_UINT8(2, state.entryCount);
+  TEST_ASSERT_EQUAL_UINT16(2, state.entryGeneration);
+  TEST_ASSERT_EQUAL_STRING("second", state.entries[0]);
+  TEST_ASSERT_EQUAL_STRING("third", state.entries[1]);
+}
+
 void test_permission_command_uses_expected_wire_format() {
   const String payload = codeBuddyEncodePermission("req_abc123", "once");
 
@@ -67,6 +89,7 @@ void setup() {
   UNITY_BEGIN();
   RUN_TEST(test_heartbeat_snapshot_updates_state);
   RUN_TEST(test_missing_prompt_clears_existing_prompt);
+  RUN_TEST(test_entries_update_transcript_state);
   RUN_TEST(test_permission_command_uses_expected_wire_format);
   RUN_TEST(test_ack_uses_expected_wire_format);
   RUN_TEST(test_transfer_path_validation_rejects_escape_paths);

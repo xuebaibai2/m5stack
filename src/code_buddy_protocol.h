@@ -12,6 +12,9 @@ struct CodeBuddyState {
   uint16_t approvals = 0;
   uint16_t denials = 0;
   char message[128] = "No Codex connected";
+  char entries[8][160] = {};
+  uint8_t entryCount = 0;
+  uint16_t entryGeneration = 0;
   char promptId[40] = "";
   char promptTool[96] = "";
   char promptHint[256] = "";
@@ -38,6 +41,35 @@ inline bool codeBuddyApplyJson(const char* json, CodeBuddyState& state,
   state.tokensToday = doc["tokens_today"] | state.tokensToday;
   state.lastUpdatedMs = nowMs;
   codeBuddyCopy(state.message, sizeof(state.message), doc["msg"] | state.message);
+
+  JsonArray entries = doc["entries"];
+  if (!entries.isNull()) {
+    char nextEntries[8][160] = {};
+    uint8_t nextCount = 0;
+    for (JsonVariant entry : entries) {
+      if (nextCount >= 8) {
+        break;
+      }
+      codeBuddyCopy(nextEntries[nextCount], sizeof(nextEntries[nextCount]),
+                    entry.as<const char*>());
+      ++nextCount;
+    }
+
+    bool changed = nextCount != state.entryCount;
+    for (uint8_t i = 0; i < nextCount && !changed; ++i) {
+      changed = strcmp(nextEntries[i], state.entries[i]) != 0;
+    }
+    if (changed) {
+      for (uint8_t i = 0; i < nextCount; ++i) {
+        codeBuddyCopy(state.entries[i], sizeof(state.entries[i]), nextEntries[i]);
+      }
+      for (uint8_t i = nextCount; i < state.entryCount && i < 8; ++i) {
+        state.entries[i][0] = '\0';
+      }
+      state.entryCount = nextCount;
+      ++state.entryGeneration;
+    }
+  }
 
   JsonObject prompt = doc["prompt"];
   if (prompt.isNull()) {

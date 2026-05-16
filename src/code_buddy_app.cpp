@@ -34,6 +34,8 @@ constexpr int kCodeBuddyWidth = 135;
 constexpr int kCodeBuddyHeight = 240;
 constexpr size_t kRxQueueSize = 2048;
 constexpr size_t kRxProcessChunkSize = 128;
+constexpr uint32_t kShakeCheckMs = 50;
+constexpr float kShakeDeltaThreshold = 0.8f;
 
 BLECharacteristic* txCharacteristic = nullptr;
 Preferences preferences;
@@ -46,10 +48,13 @@ bool runtimeReady = false;
 bool spriteCreated = false;
 bool buddyMode = true;
 bool gifAvailable = false;
+bool screenOff = false;
 enum class CodeBuddyView : uint8_t { Home, Pet, Info };
 CodeBuddyView currentView = CodeBuddyView::Home;
 uint8_t petPage = 0;
 uint8_t infoPage = 0;
+uint8_t transcriptScroll = 0;
+uint16_t lastEntryGeneration = 0;
 CodeBuddyState state;
 char deviceName[24] = "Buddy";
 char ownerDisplayName[32] = "";
@@ -74,8 +79,12 @@ PersonaState activeState = P_SLEEP;
 uint32_t oneShotUntil = 0;
 uint32_t promptArrivedMs = 0;
 uint32_t lastInteractMs = 0;
+uint32_t lastShakeCheckMs = 0;
+float accelBaseline = 1.0f;
 
 bool ensureFilesystem();
+void wakeScreen();
+bool promptPending();
 
 bool ensureRuntimeReady() {
   if (runtimeReady) {
@@ -236,6 +245,55 @@ void markPromptChange() {
 }
 
 void notifyHost(const String& payload);
+
+bool promptPending() {
+  return state.promptId[0] != '\0' && !responseSent;
+}
+
+void wakeScreen() {
+  if (!screenOff) {
+    return;
+  }
+  screenOff = false;
+  M5.Display.wakeup();
+  screenDirty = true;
+  lastInteractMs = millis();
+}
+
+uint8_t wrapTextRows(const char* text, char rows[][48], uint8_t maxRows,
+                     uint8_t width) {
+  if (text == nullptr || text[0] == '\0' || maxRows == 0 || width == 0) {
+    return 0;
+  }
+
+  uint8_t row = 0;
+  size_t col = 0;
+  rows[row][0] = '\0';
+  for (const char* p = text; *p != '\0' && row < maxRows; ++p) {
+    if (*p == '\r') {
+      continue;
+    }
+    if (*p == '\n' || col >= width) {
+      rows[row][col] = '\0';
+      ++row;
+      if (row >= maxRows) {
+        break;
+      }
+      col = 0;
+      rows[row][0] = '\0';
+      if (*p == '\n') {
+        continue;
+      }
+    }
+    rows[row][col++] = *p;
+    rows[row][col] = '\0';
+  }
+
+  if (row < maxRows && col > 0) {
+    ++row;
+  }
+  return row;
+}
 
 void setLocalTime(JsonArray timeArray) {
   if (timeArray.size() != 2) {
@@ -629,26 +687,61 @@ void drawApproval(const Palette& palette) {
 
 void drawHud(const Palette& palette) {
   const int area = 42;
+  constexpr uint8_t kVisibleRows = 3;
+  constexpr uint8_t kRowWidth = 20;
   spr.fillRect(0, kCodeBuddyHeight - area, kCodeBuddyWidth, area, palette.bg);
   spr.drawFastHLine(0, kCodeBuddyHeight - area, kCodeBuddyWidth,
                     palette.textDim);
-  spr.setTextSize(1);
-  spr.setTextColor(sharedBleConnected() ? TFT_GREEN : TFT_ORANGE, palette.bg);
-  spr.setCursor(4, kCodeBuddyHeight - area + 4);
-  spr.printf("%s", sharedBleConnected() ? "linked" : "discover");
-  spr.setTextColor(palette.textDim, palette.bg);
-  spr.setCursor(58, kCodeBuddyHeight - area + 4);
-  spr.printf("wait %u run %u", state.sessionsWaiting, state.sessionsRunning);
-  spr.setTextColor(palette.text, palette.bg);
-  spr.setCursor(4, kCodeBuddyHeight - area + 20);
+
+  if (state.entryGeneration != lastEntryGeneration) {
+    transcriptScroll = 0;
+    lastEntryGeneration = state.entryGeneration;
+  }
+
+  char rows[32][48] = {};
+  uint8_t rowCount = 0;
+  if (state.entryCount > 0) {
+    for (uint8_t i = 0; i < state.entryCount && rowCount < 32; ++i) {
+      rowCount += wrapTextRows(state.entries[i], &rows[rowCount],
+                               32 - rowCount, kRowWidth);
+    }
+  }
+  if (rowCount == 0) {
+    rowCount = wrapTextRows(state.message, rows, 32, kRowWidth);
+  }
+
+  const uint8_t maxScroll =
+      rowCount > kVisibleRows ? rowCount - kVisibleRows : 0;
+  if (transcriptScroll > maxScroll) {
+    transcriptScroll = maxScroll;
+  }
+
   if (transferActive) {
+    spr.setTextSize(1);
+    spr.setTextColor(palette.text, palette.bg);
+    spr.setCursor(4, kCodeBuddyHeight - area + 20);
     spr.printf("installing %luK/%luK",
                static_cast<unsigned long>(transferTotalWritten / 1024),
                static_cast<unsigned long>(transferTotal / 1024));
   } else {
-    char msg[48];
-    codeBuddyCopy(msg, sizeof(msg), state.message);
-    spr.print(msg);
+    const int end = static_cast<int>(rowCount) - transcriptScroll;
+    int start = end - kVisibleRows;
+    if (start < 0) {
+      start = 0;
+    }
+    spr.setTextSize(1);
+    for (int row = start; row < end; ++row) {
+      const bool newest = row == static_cast<int>(rowCount) - 1 &&
+                          transcriptScroll == 0;
+      spr.setTextColor(newest ? palette.text : palette.textDim, palette.bg);
+      spr.setCursor(4, kCodeBuddyHeight - area + 4 + (row - start) * 12);
+      spr.print(rows[row]);
+    }
+    if (transcriptScroll > 0) {
+      spr.setTextColor(palette.body, palette.bg);
+      spr.setCursor(kCodeBuddyWidth - 18, kCodeBuddyHeight - 14);
+      spr.printf("-%u", transcriptScroll);
+    }
   }
 }
 
@@ -683,7 +776,7 @@ void drawPetView(const Palette& palette) {
     spr.setCursor(6, 52);
     spr.print("B next page");
     spr.setCursor(6, 68);
-    spr.print("hold A/B menu");
+    spr.print("hold A menu");
     spr.setCursor(6, 92);
     spr.print("Prompt:");
     spr.setCursor(6, 108);
@@ -750,8 +843,45 @@ void triggerOneShot(PersonaState persona, uint32_t durationMs) {
   oneShotUntil = millis() + durationMs;
 }
 
+bool checkShake() {
+  if (!M5.Imu.isEnabled()) {
+    return false;
+  }
+
+  float ax = 0.0f;
+  float ay = 0.0f;
+  float az = 0.0f;
+  if (!M5.Imu.getAccelData(&ax, &ay, &az)) {
+    return false;
+  }
+
+  const float magnitude = sqrtf(ax * ax + ay * ay + az * az);
+  const float delta = fabsf(magnitude - accelBaseline);
+  accelBaseline = accelBaseline * 0.95f + magnitude * 0.05f;
+  return delta > kShakeDeltaThreshold;
+}
+
+void pollShake() {
+  const uint32_t now = millis();
+  if (now - lastShakeCheckMs < kShakeCheckMs) {
+    return;
+  }
+  lastShakeCheckMs = now;
+
+  if (screenOff || promptPending() || (int32_t)(now - oneShotUntil) < 0) {
+    return;
+  }
+
+  if (checkShake()) {
+    triggerOneShot(P_DIZZY, 2000);
+    screenDirty = true;
+    lastInteractMs = now;
+    Serial.println("[codebuddy] shake: dizzy");
+  }
+}
+
 void renderRuntime() {
-  if (!appVisible || !runtimeReady) {
+  if (!appVisible || !runtimeReady || screenOff) {
     return;
   }
 
@@ -845,8 +975,10 @@ void codeBuddyAppBegin() {
 void codeBuddyAppStart() {
   Serial.println("[codebuddy] start app");
   appVisible = true;
+  screenOff = false;
   sharedBleHandoffToAdvertisement(kCodeBuddyBleDeviceName,
                                   kCodeBuddyServiceUuid);
+  M5.Display.wakeup();
   M5.Display.setRotation(0);
   ensureRuntimeReady();
   screenDirty = true;
@@ -856,10 +988,17 @@ void codeBuddyAppStart() {
 
 void codeBuddyAppUpdate() {
   processPendingRx();
+  pollShake();
   renderRuntime();
 }
 
 void codeBuddyAppButtonA() {
+  if (screenOff) {
+    wakeScreen();
+    renderRuntime();
+    return;
+  }
+
   if (state.promptId[0] != '\0' && !responseSent) {
     respondToPrompt("once");
     return;
@@ -872,30 +1011,73 @@ void codeBuddyAppButtonA() {
   buddySetPeek(currentView != CodeBuddyView::Home);
   characterSetPeek(currentView != CodeBuddyView::Home);
   triggerOneShot(P_HEART, 1200);
+  lastInteractMs = millis();
   screenDirty = true;
 }
 
 void codeBuddyAppButtonB() {
+  if (screenOff) {
+    wakeScreen();
+    renderRuntime();
+    return;
+  }
+
   if (state.promptId[0] != '\0' && !responseSent) {
     respondToPrompt("deny");
     return;
   }
 
-  if (currentView == CodeBuddyView::Pet) {
+  if (currentView == CodeBuddyView::Home) {
+    char rows[32][48] = {};
+    uint8_t rowCount = 0;
+    if (state.entryCount > 0) {
+      for (uint8_t i = 0; i < state.entryCount && rowCount < 32; ++i) {
+        rowCount += wrapTextRows(state.entries[i], &rows[rowCount],
+                                 32 - rowCount, 20);
+      }
+    }
+    if (rowCount == 0) {
+      rowCount = wrapTextRows(state.message, rows, 32, 20);
+    }
+    const uint8_t maxScroll = rowCount > 3 ? rowCount - 3 : 0;
+    transcriptScroll = maxScroll == 0 ? 0 : (transcriptScroll + 1) % (maxScroll + 1);
+  } else if (currentView == CodeBuddyView::Pet) {
     petPage = (petPage + 1) % 2;
   } else if (currentView == CodeBuddyView::Info) {
     infoPage = (infoPage + 1) % 3;
-  } else if (buddyMode) {
-    buddyNextSpecies();
   } else {
     triggerOneShot(P_HEART, 1200);
   }
+  lastInteractMs = millis();
   screenDirty = true;
+}
+
+bool codeBuddyAppScreenOff() {
+  return screenOff;
+}
+
+void codeBuddyAppWake() {
+  wakeScreen();
+  renderRuntime();
+}
+
+void codeBuddyAppToggleScreen() {
+  if (screenOff) {
+    codeBuddyAppWake();
+    return;
+  }
+  screenOff = true;
+  M5.Display.sleep();
+  lastInteractMs = millis();
 }
 
 void codeBuddyAppStop() {
   Serial.println("[codebuddy] stop app");
   appVisible = false;
+  if (screenOff) {
+    M5.Display.wakeup();
+    screenOff = false;
+  }
   sharedBleHandoffToAdvertisement(kSharedBleDeviceName, kStickLinkServiceUuid);
   M5.Display.setRotation(1);
 }

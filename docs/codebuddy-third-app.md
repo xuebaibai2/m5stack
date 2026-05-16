@@ -143,6 +143,17 @@ their app-specific characteristics and message parsing.
 - Added a short settle delay after raw BLE advertisement reconfiguration before
   restarting advertising. This avoids scans briefly seeing the new CodeBuddy
   name with the previous Stick Link service UUID.
+- Updated the launcher-port controls to match `external/CodeBuddy/README.md`:
+  Button A cycles Home, Pet, and Info screens or approves a prompt; Button B
+  scrolls the Home transcript, advances Pet/Info pages, or denies a prompt;
+  long Button A returns to the launcher menu; short Power toggles the CodeBuddy
+  screen off/on. Long Button B no longer exits CodeBuddy.
+- Parsed the desktop `entries` array so the Home screen has transcript rows for
+  Button B to scroll, matching the upstream firmware behavior.
+- Enabled the StickS3 internal IMU in the launcher `M5.begin()` config and
+  ported the upstream CodeBuddy shake detector. While CodeBuddy is visible,
+  screen-on, and no approval prompt is pending, a shake now triggers the
+  `P_DIZZY` one-shot state and logs `[codebuddy] shake: dizzy`.
 - `pio run` passed after the shared BLE and CodeBuddy app wiring.
 - `pio test -e m5stack-sticks3 -f test_code_buddy_protocol --without-uploading`
   built the test firmware but still entered PlatformIO's embedded serial test
