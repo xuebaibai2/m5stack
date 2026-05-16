@@ -10,6 +10,7 @@
 #include <mbedtls/base64.h>
 #include <time.h>
 
+#include "codebuddy_runtime/about_info.h"
 #include "codebuddy_runtime/board_compat.h"
 #include "codebuddy_runtime/buddy.h"
 #include "codebuddy_runtime/character.h"
@@ -36,6 +37,10 @@ constexpr size_t kRxQueueSize = 2048;
 constexpr size_t kRxProcessChunkSize = 128;
 constexpr uint32_t kShakeCheckMs = 50;
 constexpr float kShakeDeltaThreshold = 0.8f;
+constexpr uint8_t kPetPageCount = 2;
+constexpr uint8_t kInfoPageCount = 6;
+constexpr uint16_t kPanelColor = 0x2104;
+constexpr uint16_t kHotColor = 0xFA20;
 
 BLECharacteristic* txCharacteristic = nullptr;
 Preferences preferences;
@@ -49,10 +54,19 @@ bool spriteCreated = false;
 bool buddyMode = true;
 bool gifAvailable = false;
 bool screenOff = false;
+bool exitToLauncher = false;
+bool napping = false;
 enum class CodeBuddyView : uint8_t { Home, Pet, Info };
+enum class CodeBuddyOverlay : uint8_t { None, Menu, Settings, Reset };
 CodeBuddyView currentView = CodeBuddyView::Home;
+CodeBuddyOverlay overlay = CodeBuddyOverlay::None;
 uint8_t petPage = 0;
 uint8_t infoPage = 0;
+uint8_t menuSel = 0;
+uint8_t settingsSel = 0;
+uint8_t resetSel = 0;
+uint8_t brightnessLevel = 4;
+uint8_t resetConfirmIdx = 0xFF;
 uint8_t transcriptScroll = 0;
 uint16_t lastEntryGeneration = 0;
 CodeBuddyState state;
@@ -80,11 +94,16 @@ uint32_t oneShotUntil = 0;
 uint32_t promptArrivedMs = 0;
 uint32_t lastInteractMs = 0;
 uint32_t lastShakeCheckMs = 0;
+uint32_t resetConfirmUntil = 0;
+uint32_t napStartMs = 0;
+int8_t faceDownFrames = 0;
 float accelBaseline = 1.0f;
 
 bool ensureFilesystem();
 void wakeScreen();
 bool promptPending();
+void closeOverlays();
+void drawOverlays(const Palette& palette);
 
 bool ensureRuntimeReady() {
   if (runtimeReady) {
@@ -95,6 +114,7 @@ bool ensureRuntimeReady() {
   statsLoad();
   settingsLoad();
   petNameLoad();
+  compatSetBrightnessPercent(20 + brightnessLevel * 20);
   if (deviceName[0] != '\0') {
     petNameSet(deviceName);
   }
@@ -293,6 +313,74 @@ uint8_t wrapTextRows(const char* text, char rows[][48], uint8_t maxRows,
     ++row;
   }
   return row;
+}
+
+void clipText(char* dest, size_t destSize, const char* source,
+              uint8_t maxChars) {
+  if (destSize == 0) {
+    return;
+  }
+  if (source == nullptr) {
+    dest[0] = '\0';
+    return;
+  }
+  size_t n = 0;
+  while (source[n] != '\0' && n < destSize - 1 && n < maxChars) {
+    dest[n] = source[n];
+    ++n;
+  }
+  dest[n] = '\0';
+}
+
+void nextPet() {
+  if (!runtimeReady) {
+    return;
+  }
+  if (!buddyMode && gifAvailable) {
+    buddyMode = true;
+    speciesIdxSave(buddySpeciesIdx());
+  } else if (buddyMode &&
+             buddySpeciesIdx() + 1 < buddySpeciesCount()) {
+    buddyNextSpecies();
+  } else if (gifAvailable) {
+    buddyMode = false;
+    speciesIdxSave(0xFF);
+  } else {
+    buddyNextSpecies();
+  }
+  buddySetPeek(currentView != CodeBuddyView::Home);
+  characterSetPeek(currentView != CodeBuddyView::Home);
+  screenDirty = true;
+}
+
+void deleteCharacters() {
+  if (!ensureFilesystem()) {
+    return;
+  }
+  if (runtimeReady) {
+    characterClose();
+  }
+  wipeDir("/characters");
+  gifAvailable = false;
+  buddyMode = true;
+  speciesIdxSave(buddySpeciesIdx());
+  screenDirty = true;
+}
+
+void factoryReset() {
+  preferences.begin("codebuddy", false);
+  preferences.clear();
+  preferences.end();
+  Preferences buddyPrefs;
+  buddyPrefs.begin("buddy", false);
+  buddyPrefs.clear();
+  buddyPrefs.end();
+  if (ensureFilesystem()) {
+    LittleFS.format();
+  }
+  sharedBleClearBonds();
+  delay(300);
+  ESP.restart();
 }
 
 void setLocalTime(JsonArray timeArray) {
@@ -745,44 +833,140 @@ void drawHud(const Palette& palette) {
   }
 }
 
+void tinyHeart(int x, int y, bool filled, uint16_t color) {
+  if (filled) {
+    spr.fillCircle(x - 2, y, 2, color);
+    spr.fillCircle(x + 2, y, 2, color);
+    spr.fillTriangle(x - 4, y + 1, x + 4, y + 1, x, y + 5, color);
+  } else {
+    spr.drawCircle(x - 2, y, 2, color);
+    spr.drawCircle(x + 2, y, 2, color);
+    spr.drawLine(x - 4, y + 1, x, y + 5, color);
+    spr.drawLine(x + 4, y + 1, x, y + 5, color);
+  }
+}
+
+void drawPetStats(const Palette& palette) {
+  int y = 42;
+  spr.setTextColor(palette.textDim, palette.bg);
+  spr.setCursor(6, y - 2);
+  spr.print("mood");
+  const uint8_t mood = statsMoodTier();
+  const uint16_t moodColor =
+      mood >= 3 ? TFT_RED : mood >= 2 ? kHotColor : palette.textDim;
+  for (int i = 0; i < 4; ++i) {
+    tinyHeart(54 + i * 16, y + 2, i < mood, moodColor);
+  }
+
+  y += 20;
+  spr.setCursor(6, y - 2);
+  spr.print("fed");
+  const uint8_t fed = statsFedProgress();
+  for (int i = 0; i < 10; ++i) {
+    const int x = 38 + i * 9;
+    if (i < fed) {
+      spr.fillCircle(x, y + 1, 2, palette.body);
+    } else {
+      spr.drawCircle(x, y + 1, 2, palette.textDim);
+    }
+  }
+
+  y += 20;
+  spr.setCursor(6, y - 2);
+  spr.print("energy");
+  const uint8_t energy = statsEnergyTier();
+  const uint16_t energyColor =
+      energy >= 4 ? TFT_CYAN : energy >= 2 ? TFT_YELLOW : kHotColor;
+  for (int i = 0; i < 5; ++i) {
+    const int x = 54 + i * 13;
+    if (i < energy) {
+      spr.fillRect(x, y - 2, 9, 6, energyColor);
+    } else {
+      spr.drawRect(x, y - 2, 9, 6, palette.textDim);
+    }
+  }
+
+  y += 24;
+  spr.fillRoundRect(6, y - 2, 42, 14, 3, palette.body);
+  spr.setTextColor(palette.bg, palette.body);
+  spr.setCursor(11, y + 1);
+  spr.printf("Lv %u", stats().level);
+
+  y += 20;
+  spr.setTextColor(palette.textDim, palette.bg);
+  spr.setCursor(6, y);
+  spr.printf("approved %u", stats().approvals);
+  spr.setCursor(6, y + 10);
+  spr.printf("denied   %u", stats().denials);
+  const uint32_t nap = stats().napSeconds;
+  spr.setCursor(6, y + 20);
+  spr.printf("napped   %luh%02lum", nap / 3600, (nap / 60) % 60);
+
+  auto printTokens = [&](const char* label, uint32_t value, int yPx) {
+    spr.setCursor(6, yPx);
+    if (value >= 1000000) {
+      spr.printf("%s%lu.%luM", label,
+                 static_cast<unsigned long>(value / 1000000),
+                 static_cast<unsigned long>((value / 100000) % 10));
+    } else if (value >= 1000) {
+      spr.printf("%s%lu.%luK", label,
+                 static_cast<unsigned long>(value / 1000),
+                 static_cast<unsigned long>((value / 100) % 10));
+    } else {
+      spr.printf("%s%lu", label, static_cast<unsigned long>(value));
+    }
+  };
+  printTokens("tokens   ", stats().tokens, y + 30);
+  printTokens("today    ", state.tokensToday, y + 40);
+}
+
+void drawPetHowTo(const Palette& palette) {
+  int y = 42;
+  auto line = [&](uint16_t color, const char* text) {
+    spr.setTextColor(color, palette.bg);
+    spr.setCursor(6, y);
+    spr.print(text);
+    y += 9;
+  };
+  auto gap = [&]() { y += 4; };
+
+  line(palette.body, "MOOD");
+  line(palette.textDim, " approve fast = up");
+  line(palette.textDim, " deny lots = down");
+  gap();
+  line(palette.body, "FED");
+  line(palette.textDim, " 50K tokens =");
+  line(palette.textDim, " level up + confetti");
+  gap();
+  line(palette.body, "ENERGY");
+  line(palette.textDim, " face-down to nap");
+  line(palette.textDim, " refills to full");
+  gap();
+  line(palette.textDim, "idle 30s = off");
+  line(palette.textDim, "any button = wake");
+  gap();
+  line(palette.textDim, "A: screens  B: page");
+  line(palette.textDim, "hold A: menu");
+}
+
 void drawPetView(const Palette& palette) {
   spr.fillSprite(palette.bg);
   spr.setTextSize(1);
   spr.setTextColor(palette.text, palette.bg);
   spr.setCursor(4, 8);
-  spr.printf("%s", petName());
+  if (ownerName()[0] != '\0') {
+    spr.printf("%s's %s", ownerName(), petName());
+  } else {
+    spr.printf("%s", petName());
+  }
   spr.setTextColor(palette.textDim, palette.bg);
   spr.setCursor(108, 8);
-  spr.printf("%u/2", petPage + 1);
+  spr.printf("%u/%u", petPage + 1, kPetPageCount);
 
   if (petPage == 0) {
-    spr.setTextColor(palette.body, palette.bg);
-    spr.setCursor(6, 36);
-    spr.printf("Level %u", stats().level);
-    spr.setTextColor(palette.textDim, palette.bg);
-    spr.setCursor(6, 58);
-    spr.printf("approved %u", stats().approvals);
-    spr.setCursor(6, 72);
-    spr.printf("denied   %u", stats().denials);
-    spr.setCursor(6, 86);
-    spr.printf("tokens   %lu", static_cast<unsigned long>(stats().tokens));
-    spr.setCursor(6, 100);
-    spr.printf("today    %lu", static_cast<unsigned long>(state.tokensToday));
+    drawPetStats(palette);
   } else {
-    spr.setTextColor(palette.body, palette.bg);
-    spr.setCursor(6, 36);
-    spr.print("A screens");
-    spr.setTextColor(palette.textDim, palette.bg);
-    spr.setCursor(6, 52);
-    spr.print("B next page");
-    spr.setCursor(6, 68);
-    spr.print("hold A menu");
-    spr.setCursor(6, 92);
-    spr.print("Prompt:");
-    spr.setCursor(6, 108);
-    spr.print("A approve");
-    spr.setCursor(6, 124);
-    spr.print("B deny");
+    drawPetHowTo(palette);
   }
 }
 
@@ -791,40 +975,141 @@ void drawInfoView(const Palette& palette) {
   spr.setTextSize(1);
   spr.setTextColor(palette.text, palette.bg);
   spr.setCursor(4, 8);
-  spr.print("CodeBuddy");
+  spr.print("Info");
   spr.setTextColor(palette.textDim, palette.bg);
   spr.setCursor(108, 8);
-  spr.printf("%u/3", infoPage + 1);
+  spr.printf("%u/%u", infoPage + 1, kInfoPageCount);
 
-  spr.setCursor(6, 36);
+  int y = 26;
+  auto heading = [&](const char* text) {
+    spr.setTextColor(palette.body, palette.bg);
+    spr.setCursor(6, y);
+    spr.print(text);
+    y += 16;
+  };
+  auto line = [&](uint16_t color, const char* text) {
+    char clipped[80];
+    clipText(clipped, sizeof(clipped), text, 21);
+    spr.setTextColor(color, palette.bg);
+    spr.setCursor(6, y);
+    spr.print(clipped);
+    y += 10;
+  };
+  auto printfLine = [&](uint16_t color, const char* fmt, ...) {
+    char buffer[96];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    line(color, buffer);
+  };
+
   if (infoPage == 0) {
-    spr.setTextColor(palette.body, palette.bg);
-    spr.print("Bluetooth");
-    spr.setTextColor(palette.textDim, palette.bg);
-    spr.setCursor(6, 56);
-    spr.printf("%s", kSharedBleDeviceName);
-    spr.setCursor(6, 72);
-    spr.printf("CodeBuddy %s", sharedBleConnected() ? "linked" : "discover");
-    spr.setCursor(6, 88);
-    spr.print("NUS advertised");
+    heading("ABOUT");
+    line(palette.textDim, "I watch your Codex");
+    line(palette.textDim, "desktop sessions.");
+    y += 4;
+    line(palette.textDim, "I sleep when");
+    line(palette.textDim, "nothing's happening,");
+    line(palette.textDim, "wake when you work,");
+    line(palette.textDim, "and ask for approvals.");
+    y += 4;
+    line(palette.text, "Press A on a prompt");
+    line(palette.text, "to approve from here.");
   } else if (infoPage == 1) {
-    spr.setTextColor(palette.body, palette.bg);
-    spr.print("Codex");
-    spr.setTextColor(palette.textDim, palette.bg);
-    spr.setCursor(6, 56);
-    spr.printf("sessions %u", state.sessionsTotal);
-    spr.setCursor(6, 72);
-    spr.printf("running  %u", state.sessionsRunning);
-    spr.setCursor(6, 88);
-    spr.printf("waiting  %u", state.sessionsWaiting);
+    heading("BUTTONS");
+    line(palette.text, "A   front");
+    line(palette.textDim, "    next screen");
+    line(palette.textDim, "    approve prompt");
+    y += 4;
+    line(palette.text, "B   right side");
+    line(palette.textDim, "    next page");
+    line(palette.textDim, "    deny prompt");
+    y += 4;
+    line(palette.text, "hold A");
+    line(palette.textDim, "    menu");
+    line(palette.text, "Power");
+    line(palette.textDim, "    screen off");
+  } else if (infoPage == 2) {
+    heading("CODEX");
+    printfLine(palette.textDim, "sessions  %u", state.sessionsTotal);
+    printfLine(palette.textDim, "running   %u", state.sessionsRunning);
+    printfLine(palette.textDim, "waiting   %u", state.sessionsWaiting);
+    y += 6;
+    heading("LINK");
+    printfLine(palette.textDim, "ble       %s",
+               sharedBleConnected() ? "linked" : "discover");
+    const uint32_t age = state.lastUpdatedMs == 0
+                             ? 0
+                             : (millis() - state.lastUpdatedMs) / 1000;
+    printfLine(palette.textDim, "last msg  %lus",
+               static_cast<unsigned long>(age));
+    static const char* const kStateNames[] = {
+        "sleep", "idle", "busy", "attention", "celebrate", "dizzy", "heart"};
+    printfLine(palette.textDim, "state     %s", kStateNames[activeState]);
+  } else if (infoPage == 3) {
+    heading("DEVICE");
+    const int batteryMv = M5.Power.getBatteryVoltage();
+    const int batteryMa = M5.Power.getBatteryCurrent();
+    const int vbusMv = M5.Power.getVBUSVoltage();
+    int batteryPct = (batteryMv - 3200) / 10;
+    if (batteryPct < 0) {
+      batteryPct = 0;
+    } else if (batteryPct > 100) {
+      batteryPct = 100;
+    }
+    printfLine(palette.text, "%d%% battery", batteryPct);
+    printfLine(palette.textDim, "battery  %d.%02dV", batteryMv / 1000,
+               (batteryMv % 1000) / 10);
+    printfLine(palette.textDim, "current  %+dmA", batteryMa);
+    if (vbusMv > 4000) {
+      printfLine(palette.textDim, "usb in   %d.%02dV", vbusMv / 1000,
+                 (vbusMv % 1000) / 10);
+    }
+    y += 6;
+    heading("SYSTEM");
+    if (ownerName()[0] != '\0') {
+      printfLine(palette.textDim, "owner    %s", ownerName());
+    }
+    const uint32_t uptime = millis() / 1000;
+    printfLine(palette.textDim, "uptime   %luh %02lum",
+               static_cast<unsigned long>(uptime / 3600),
+               static_cast<unsigned long>((uptime / 60) % 60));
+    printfLine(palette.textDim, "heap     %uKB", ESP.getFreeHeap() / 1024);
+  } else if (infoPage == 4) {
+    heading("BLUETOOTH");
+    line(sharedBleConnected() ? TFT_GREEN : kHotColor,
+         sharedBleConnected() ? "linked" : "discover");
+    y += 4;
+    line(palette.text, kCodeBuddyBleDeviceName);
+    line(palette.textDim, "Nordic UART Service");
+    if (sharedBleConnected()) {
+      const uint32_t age = state.lastUpdatedMs == 0
+                               ? 0
+                               : (millis() - state.lastUpdatedMs) / 1000;
+      printfLine(palette.textDim, "last msg  %lus",
+                 static_cast<unsigned long>(age));
+    } else {
+      y += 4;
+      line(palette.text, "TO PAIR");
+      line(palette.textDim, "code-buddy repair");
+      y += 4;
+      line(palette.text, "TO STAY LINKED");
+      line(palette.textDim, "run codex");
+    }
   } else {
-    spr.setTextColor(palette.body, palette.bg);
-    spr.print("Character");
-    spr.setTextColor(palette.textDim, palette.bg);
-    spr.setCursor(6, 56);
-    spr.printf("%s", buddyMode ? buddySpeciesName() : "GIF loaded");
-    spr.setCursor(6, 72);
-    spr.print("B changes ASCII pet");
+    heading("CREDITS");
+    const AboutInfo about = currentAboutInfo();
+    line(palette.textDim, "made by");
+    line(palette.text, about.made_by);
+    y += 6;
+    line(palette.textDim, "source");
+    line(palette.text, about.source_line_1);
+    line(palette.text, about.source_line_2);
+    y += 6;
+    line(palette.textDim, "hardware");
+    line(palette.text, about.hardware_line_1);
+    line(palette.text, about.hardware_line_2);
   }
 }
 
@@ -861,6 +1146,20 @@ bool checkShake() {
   return delta > kShakeDeltaThreshold;
 }
 
+bool isFaceDown() {
+  if (!M5.Imu.isEnabled()) {
+    return false;
+  }
+
+  float ax = 0.0f;
+  float ay = 0.0f;
+  float az = 0.0f;
+  if (!M5.Imu.getAccelData(&ax, &ay, &az)) {
+    return false;
+  }
+  return az < -0.7f && fabsf(ax) < 0.4f && fabsf(ay) < 0.4f;
+}
+
 void pollShake() {
   const uint32_t now = millis();
   if (now - lastShakeCheckMs < kShakeCheckMs) {
@@ -880,6 +1179,271 @@ void pollShake() {
   }
 }
 
+void pollNap() {
+  if (promptPending() || screenOff) {
+    return;
+  }
+
+  if (isFaceDown()) {
+    if (faceDownFrames < 20) {
+      ++faceDownFrames;
+    }
+  } else if (faceDownFrames > -10) {
+    --faceDownFrames;
+  }
+
+  const uint32_t now = millis();
+  if (!napping && faceDownFrames >= 15) {
+    napping = true;
+    napStartMs = now;
+    compatSetBrightnessPercent(8);
+    triggerOneShot(P_SLEEP, 60000);
+    screenDirty = true;
+    Serial.println("[codebuddy] face-down nap");
+  } else if (napping && faceDownFrames <= -8) {
+    napping = false;
+    statsOnNapEnd((now - napStartMs) / 1000);
+    statsOnWake();
+    compatSetBrightnessPercent(20 + brightnessLevel * 20);
+    oneShotUntil = 0;
+    screenDirty = true;
+    lastInteractMs = now;
+    Serial.println("[codebuddy] wake from nap");
+  }
+}
+
+constexpr const char* kMenuItems[] = {
+    "settings", "turn off", "help", "about", "launcher", "close"};
+constexpr uint8_t kMenuCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
+
+constexpr const char* kSettingsItems[] = {
+    "brightness", "sound", "bluetooth", "wifi", "led",
+    "transcript", "clock rot", "ascii pet", "reset", "back"};
+constexpr uint8_t kSettingsCount =
+    sizeof(kSettingsItems) / sizeof(kSettingsItems[0]);
+
+constexpr const char* kResetItems[] = {
+    "delete char", "factory reset", "back"};
+constexpr uint8_t kResetCount = sizeof(kResetItems) / sizeof(kResetItems[0]);
+
+void closeOverlays() {
+  overlay = CodeBuddyOverlay::None;
+  resetConfirmIdx = 0xFF;
+  screenDirty = true;
+}
+
+void drawMenuHints(const Palette& palette, int x, int width, int y,
+                   const char* downLabel = "A",
+                   const char* rightLabel = "B") {
+  spr.drawFastHLine(x + 6, y - 4, width - 12, palette.textDim);
+  spr.setTextColor(palette.textDim, kPanelColor);
+  int cursor = x + 8;
+  spr.setCursor(cursor, y);
+  spr.print(downLabel);
+  cursor += strlen(downLabel) * 6 + 4;
+  spr.fillTriangle(cursor, y + 1, cursor + 6, y + 1, cursor + 3, y + 6,
+                   palette.textDim);
+  cursor = x + width / 2 + 4;
+  spr.setCursor(cursor, y);
+  spr.print(rightLabel);
+  cursor += strlen(rightLabel) * 6 + 4;
+  spr.fillTriangle(cursor, y, cursor, y + 6, cursor + 5, y + 3,
+                   palette.textDim);
+}
+
+void drawMenuOverlay(const Palette& palette) {
+  const int width = 118;
+  const int height = 16 + kMenuCount * 14 + 14;
+  const int x = (kCodeBuddyWidth - width) / 2;
+  const int y = (kCodeBuddyHeight - height) / 2;
+  spr.fillRoundRect(x, y, width, height, 4, kPanelColor);
+  spr.drawRoundRect(x, y, width, height, 4, palette.textDim);
+  spr.setTextSize(1);
+  for (uint8_t i = 0; i < kMenuCount; ++i) {
+    const bool selected = i == menuSel;
+    spr.setTextColor(selected ? palette.text : palette.textDim, kPanelColor);
+    spr.setCursor(x + 6, y + 8 + i * 14);
+    spr.print(selected ? "> " : "  ");
+    spr.print(kMenuItems[i]);
+  }
+  drawMenuHints(palette, x, width, y + height - 12);
+}
+
+void drawSettingsOverlay(const Palette& palette) {
+  const int width = 122;
+  const int height = 16 + kSettingsCount * 14 + 14;
+  const int x = (kCodeBuddyWidth - width) / 2;
+  const int y = (kCodeBuddyHeight - height) / 2;
+  spr.fillRoundRect(x, y, width, height, 4, kPanelColor);
+  spr.drawRoundRect(x, y, width, height, 4, palette.textDim);
+  spr.setTextSize(1);
+  Settings& s = settings();
+  for (uint8_t i = 0; i < kSettingsCount; ++i) {
+    const bool selected = i == settingsSel;
+    spr.setTextColor(selected ? palette.text : palette.textDim, kPanelColor);
+    spr.setCursor(x + 6, y + 8 + i * 14);
+    spr.print(selected ? "> " : "  ");
+    spr.print(kSettingsItems[i]);
+    spr.setCursor(x + width - 38, y + 8 + i * 14);
+    spr.setTextColor(palette.textDim, kPanelColor);
+    if (i == 0) {
+      spr.printf("%u/4", brightnessLevel);
+    } else if (i == 1) {
+      spr.setTextColor(s.sound ? TFT_GREEN : palette.textDim, kPanelColor);
+      spr.print(s.sound ? " on" : "off");
+    } else if (i == 2) {
+      spr.setTextColor(s.bt ? TFT_GREEN : palette.textDim, kPanelColor);
+      spr.print(s.bt ? " on" : "off");
+    } else if (i == 3) {
+      spr.setTextColor(s.wifi ? TFT_GREEN : palette.textDim, kPanelColor);
+      spr.print(s.wifi ? " on" : "off");
+    } else if (i == 4) {
+      spr.setTextColor(s.led ? TFT_GREEN : palette.textDim, kPanelColor);
+      spr.print(s.led ? " on" : "off");
+    } else if (i == 5) {
+      spr.setTextColor(s.hud ? TFT_GREEN : palette.textDim, kPanelColor);
+      spr.print(s.hud ? " on" : "off");
+    } else if (i == 6) {
+      static const char* const kRotationLabels[] = {"auto", "port", "land"};
+      spr.print(kRotationLabels[s.clockRot]);
+    } else if (i == 7) {
+      const uint8_t total = buddySpeciesCount() + (gifAvailable ? 1 : 0);
+      const uint8_t pos = buddyMode ? buddySpeciesIdx() + 1 : total;
+      spr.printf("%u/%u", pos, total);
+    }
+  }
+  drawMenuHints(palette, x, width, y + height - 12, "Next", "Change");
+}
+
+void drawResetOverlay(const Palette& palette) {
+  const int width = 118;
+  const int height = 16 + kResetCount * 14 + 14;
+  const int x = (kCodeBuddyWidth - width) / 2;
+  const int y = (kCodeBuddyHeight - height) / 2;
+  spr.fillRoundRect(x, y, width, height, 4, kPanelColor);
+  spr.drawRoundRect(x, y, width, height, 4, kHotColor);
+  spr.setTextSize(1);
+  for (uint8_t i = 0; i < kResetCount; ++i) {
+    const bool selected = i == resetSel;
+    const bool armed = i == resetConfirmIdx &&
+                       (int32_t)(millis() - resetConfirmUntil) < 0;
+    spr.setTextColor(armed ? kHotColor
+                           : selected ? palette.text : palette.textDim,
+                     kPanelColor);
+    spr.setCursor(x + 6, y + 8 + i * 14);
+    spr.print(selected ? "> " : "  ");
+    spr.print(armed ? "really?" : kResetItems[i]);
+  }
+  drawMenuHints(palette, x, width, y + height - 12);
+}
+
+void drawOverlays(const Palette& palette) {
+  if (overlay == CodeBuddyOverlay::Menu) {
+    drawMenuOverlay(palette);
+  } else if (overlay == CodeBuddyOverlay::Settings) {
+    drawSettingsOverlay(palette);
+  } else if (overlay == CodeBuddyOverlay::Reset) {
+    drawResetOverlay(palette);
+  }
+}
+
+void applySetting(uint8_t index) {
+  Settings& s = settings();
+  switch (index) {
+    case 0:
+      brightnessLevel = (brightnessLevel + 1) % 5;
+      compatSetBrightnessPercent(20 + brightnessLevel * 20);
+      return;
+    case 1:
+      s.sound = !s.sound;
+      break;
+    case 2:
+      s.bt = !s.bt;
+      break;
+    case 3:
+      s.wifi = !s.wifi;
+      break;
+    case 4:
+      s.led = !s.led;
+      break;
+    case 5:
+      s.hud = !s.hud;
+      break;
+    case 6:
+      s.clockRot = (s.clockRot + 1) % 3;
+      break;
+    case 7:
+      nextPet();
+      return;
+    case 8:
+      overlay = CodeBuddyOverlay::Reset;
+      resetSel = 0;
+      resetConfirmIdx = 0xFF;
+      screenDirty = true;
+      return;
+    case 9:
+      closeOverlays();
+      return;
+  }
+  settingsSave();
+  screenDirty = true;
+}
+
+void applyReset(uint8_t index) {
+  const uint32_t now = millis();
+  const bool armed = resetConfirmIdx == index &&
+                     (int32_t)(now - resetConfirmUntil) < 0;
+  if (index == 2) {
+    overlay = CodeBuddyOverlay::Settings;
+    resetConfirmIdx = 0xFF;
+    screenDirty = true;
+    return;
+  }
+  if (!armed) {
+    resetConfirmIdx = index;
+    resetConfirmUntil = now + 3000;
+    screenDirty = true;
+    return;
+  }
+  if (index == 0) {
+    deleteCharacters();
+    overlay = CodeBuddyOverlay::Settings;
+    resetConfirmIdx = 0xFF;
+  } else {
+    factoryReset();
+  }
+  screenDirty = true;
+}
+
+void confirmMenu() {
+  switch (menuSel) {
+    case 0:
+      overlay = CodeBuddyOverlay::Settings;
+      settingsSel = 0;
+      break;
+    case 1:
+      compatPowerOff();
+      break;
+    case 2:
+      currentView = CodeBuddyView::Info;
+      infoPage = 1;
+      closeOverlays();
+      break;
+    case 3:
+      currentView = CodeBuddyView::Info;
+      infoPage = 0;
+      closeOverlays();
+      break;
+    case 4:
+      exitToLauncher = true;
+      break;
+    case 5:
+      closeOverlays();
+      break;
+  }
+  screenDirty = true;
+}
+
 void renderRuntime() {
   if (!appVisible || !runtimeReady || screenOff) {
     return;
@@ -893,12 +1457,14 @@ void renderRuntime() {
   const Palette& palette = characterPalette();
   if (currentView == CodeBuddyView::Pet) {
     drawPetView(palette);
+    drawOverlays(palette);
     spr.pushSprite(0, 0);
     screenDirty = false;
     return;
   }
   if (currentView == CodeBuddyView::Info) {
     drawInfoView(palette);
+    drawOverlays(palette);
     spr.pushSprite(0, 0);
     screenDirty = false;
     return;
@@ -924,6 +1490,7 @@ void renderRuntime() {
   } else {
     drawHud(palette);
   }
+  drawOverlays(palette);
   spr.pushSprite(0, 0);
   screenDirty = false;
 }
@@ -976,6 +1543,10 @@ void codeBuddyAppStart() {
   Serial.println("[codebuddy] start app");
   appVisible = true;
   screenOff = false;
+  exitToLauncher = false;
+  napping = false;
+  faceDownFrames = 0;
+  overlay = CodeBuddyOverlay::None;
   sharedBleHandoffToAdvertisement(kCodeBuddyBleDeviceName,
                                   kCodeBuddyServiceUuid);
   M5.Display.wakeup();
@@ -989,6 +1560,7 @@ void codeBuddyAppStart() {
 void codeBuddyAppUpdate() {
   processPendingRx();
   pollShake();
+  pollNap();
   renderRuntime();
 }
 
@@ -996,6 +1568,23 @@ void codeBuddyAppButtonA() {
   if (screenOff) {
     wakeScreen();
     renderRuntime();
+    return;
+  }
+
+  if (overlay == CodeBuddyOverlay::Menu) {
+    menuSel = (menuSel + 1) % kMenuCount;
+    screenDirty = true;
+    return;
+  }
+  if (overlay == CodeBuddyOverlay::Settings) {
+    settingsSel = (settingsSel + 1) % kSettingsCount;
+    screenDirty = true;
+    return;
+  }
+  if (overlay == CodeBuddyOverlay::Reset) {
+    resetSel = (resetSel + 1) % kResetCount;
+    resetConfirmIdx = 0xFF;
+    screenDirty = true;
     return;
   }
 
@@ -1022,6 +1611,19 @@ void codeBuddyAppButtonB() {
     return;
   }
 
+  if (overlay == CodeBuddyOverlay::Menu) {
+    confirmMenu();
+    return;
+  }
+  if (overlay == CodeBuddyOverlay::Settings) {
+    applySetting(settingsSel);
+    return;
+  }
+  if (overlay == CodeBuddyOverlay::Reset) {
+    applyReset(resetSel);
+    return;
+  }
+
   if (state.promptId[0] != '\0' && !responseSent) {
     respondToPrompt("deny");
     return;
@@ -1042,11 +1644,31 @@ void codeBuddyAppButtonB() {
     const uint8_t maxScroll = rowCount > 3 ? rowCount - 3 : 0;
     transcriptScroll = maxScroll == 0 ? 0 : (transcriptScroll + 1) % (maxScroll + 1);
   } else if (currentView == CodeBuddyView::Pet) {
-    petPage = (petPage + 1) % 2;
+    petPage = (petPage + 1) % kPetPageCount;
   } else if (currentView == CodeBuddyView::Info) {
-    infoPage = (infoPage + 1) % 3;
+    infoPage = (infoPage + 1) % kInfoPageCount;
   } else {
     triggerOneShot(P_HEART, 1200);
+  }
+  lastInteractMs = millis();
+  screenDirty = true;
+}
+
+void codeBuddyAppButtonALong() {
+  if (screenOff) {
+    codeBuddyAppWake();
+    return;
+  }
+  if (overlay == CodeBuddyOverlay::Reset) {
+    overlay = CodeBuddyOverlay::Settings;
+    resetConfirmIdx = 0xFF;
+  } else if (overlay == CodeBuddyOverlay::Settings) {
+    closeOverlays();
+  } else if (overlay == CodeBuddyOverlay::Menu) {
+    closeOverlays();
+  } else {
+    overlay = CodeBuddyOverlay::Menu;
+    menuSel = 0;
   }
   lastInteractMs = millis();
   screenDirty = true;
@@ -1071,9 +1693,21 @@ void codeBuddyAppToggleScreen() {
   lastInteractMs = millis();
 }
 
+bool codeBuddyAppWantsLauncher() {
+  return exitToLauncher;
+}
+
 void codeBuddyAppStop() {
   Serial.println("[codebuddy] stop app");
   appVisible = false;
+  exitToLauncher = false;
+  if (napping) {
+    statsOnNapEnd((millis() - napStartMs) / 1000);
+    statsOnWake();
+    napping = false;
+  }
+  compatSetBrightnessPercent(20 + brightnessLevel * 20);
+  overlay = CodeBuddyOverlay::None;
   if (screenOff) {
     M5.Display.wakeup();
     screenOff = false;

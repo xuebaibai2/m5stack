@@ -154,6 +154,26 @@ their app-specific characteristics and message parsing.
   ported the upstream CodeBuddy shake detector. While CodeBuddy is visible,
   screen-on, and no approval prompt is pending, a shake now triggers the
   `P_DIZZY` one-shot state and logs `[codebuddy] shake: dizzy`.
+- Ported the upstream CodeBuddy in-app screens and overlays into the launcher
+  app:
+  - Pet page 1 is now the upstream Status view with mood, fed, energy, level,
+    approved, denied, napped, total tokens, and today's tokens.
+  - Pet page 2 is the upstream status/help explanation.
+  - Info now has six upstream-style pages: About, Buttons, Codex, Device,
+    Bluetooth, and Credits.
+  - Hold Button A now opens the CodeBuddy in-app menu instead of immediately
+    returning to the launcher. The menu provides Settings, Power Off, Help,
+    About, Launcher, and Close.
+  - Settings includes upstream options for brightness, sound, Bluetooth
+    preference, Wi-Fi preference, LED, transcript, clock rotation, ASCII pet,
+    reset, and back. Bluetooth and Wi-Fi remain stored preferences only in this
+    shared launcher firmware; BLE is kept alive for Remote Mic/CodeBuddy
+    interoperability.
+  - Reset includes delete-character and factory-reset confirmation flows.
+    Factory reset clears CodeBuddy preferences, the copied upstream buddy
+    preference namespace, LittleFS assets, and BLE bonds, then restarts.
+  - Face-down nap now dims the display, holds the buddy in sleep, records nap
+    seconds, and refills energy when the device is turned face-up again.
 - `pio run` passed after the shared BLE and CodeBuddy app wiring.
 - `pio test -e m5stack-sticks3 -f test_code_buddy_protocol --without-uploading`
   built the test firmware but still entered PlatformIO's embedded serial test

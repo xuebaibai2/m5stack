@@ -184,7 +184,10 @@ void handleAppInput() {
     }
 
     if (consumeLongPress(M5.BtnA, buttonAHoldHandled)) {
-      returnToMenu();
+      codeBuddyAppButtonALong();
+      if (codeBuddyAppWantsLauncher()) {
+        returnToMenu();
+      }
       return;
     }
 
@@ -192,6 +195,9 @@ void handleAppInput() {
       codeBuddyAppButtonA();
     } else if (M5.BtnB.wasClicked()) {
       codeBuddyAppButtonB();
+    }
+    if (codeBuddyAppWantsLauncher()) {
+      returnToMenu();
     }
     return;
   }
