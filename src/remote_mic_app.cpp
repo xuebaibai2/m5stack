@@ -449,6 +449,13 @@ void remoteMicAppBegin() {
 }
 
 void remoteMicAppStart() {
+  if (!sharedBleAdvertisementMatches(kSharedBleDeviceName,
+                                     kStickLinkServiceUuid)) {
+    Serial.println("[remote-mic] start app; requesting Stick Link BLE mode");
+    sharedBleHandoffToAdvertisement(kSharedBleDeviceName, kStickLinkServiceUuid);
+  } else {
+    Serial.println("[remote-mic] start app; Stick Link BLE mode already active");
+  }
   appVisible = true;
   screenDirty = true;
   startRemoteMicInput();

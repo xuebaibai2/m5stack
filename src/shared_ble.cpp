@@ -13,6 +13,8 @@ BLEServer* server = nullptr;
 bool connected = false;
 bool started = false;
 SharedBleConnectionCallback connectionCallbacks[kMaxConnectionCallbacks] = {};
+char currentDeviceName[32] = "";
+char currentServiceUuid[40] = "";
 
 void configureAdvertisement(const char* deviceName, const char* serviceUuid) {
   if (deviceName == nullptr || deviceName[0] == '\0' || serviceUuid == nullptr ||
@@ -23,10 +25,15 @@ void configureAdvertisement(const char* deviceName, const char* serviceUuid) {
   BLEAdvertisementData advertisement;
   advertisement.setFlags(ESP_BLE_ADV_FLAG_GEN_DISC |
                          ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
-  advertisement.setCompleteServices(BLEUUID(serviceUuid));
 
   BLEAdvertisementData scanResponse;
-  scanResponse.setName(deviceName);
+  if (strcmp(deviceName, kSharedBleDeviceName) == 0) {
+    advertisement.setName(deviceName);
+    scanResponse.setCompleteServices(BLEUUID(serviceUuid));
+  } else {
+    advertisement.setCompleteServices(BLEUUID(serviceUuid));
+    scanResponse.setName(deviceName);
+  }
 
   BLEAdvertising* advertising = BLEDevice::getAdvertising();
   advertising->setAdvertisementData(advertisement);
@@ -35,6 +42,8 @@ void configureAdvertisement(const char* deviceName, const char* serviceUuid) {
   advertising->setMinPreferred(0x06);
   advertising->setMaxPreferred(0x12);
   esp_ble_gap_set_device_name(deviceName);
+  strlcpy(currentDeviceName, deviceName, sizeof(currentDeviceName));
+  strlcpy(currentServiceUuid, serviceUuid, sizeof(currentServiceUuid));
   Serial.printf("[ble] configured advertisement name='%s' service=%s\n",
                 deviceName, serviceUuid);
   delay(50);
@@ -108,9 +117,19 @@ void sharedBleSetDeviceName(const char* deviceName) {
   BLEAdvertising* advertising = BLEDevice::getAdvertising();
   advertising->stop();
   esp_ble_gap_set_device_name(deviceName);
+  strlcpy(currentDeviceName, deviceName, sizeof(currentDeviceName));
   if (!connected) {
     sharedBleStartAdvertising();
   }
+}
+
+bool sharedBleAdvertisementMatches(const char* deviceName,
+                                   const char* serviceUuid) {
+  if (deviceName == nullptr || serviceUuid == nullptr) {
+    return false;
+  }
+  return strcmp(currentDeviceName, deviceName) == 0 &&
+         strcmp(currentServiceUuid, serviceUuid) == 0;
 }
 
 void sharedBleUseAdvertisement(const char* deviceName, const char* serviceUuid) {
@@ -135,6 +154,7 @@ void sharedBleHandoffToDeviceName(const char* deviceName) {
   BLEAdvertising* advertising = BLEDevice::getAdvertising();
   advertising->stop();
   esp_ble_gap_set_device_name(deviceName);
+  strlcpy(currentDeviceName, deviceName, sizeof(currentDeviceName));
 
   if (server == nullptr || !connected) {
     Serial.printf("[ble] handoff advertise name='%s' no active central\n",

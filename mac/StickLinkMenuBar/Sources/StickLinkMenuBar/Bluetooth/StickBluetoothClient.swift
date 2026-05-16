@@ -201,7 +201,10 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
         }
     }
 
-    private func accepts(peripheral: CBPeripheral, advertisedName: String?) -> Bool {
+    private func accepts(peripheral: CBPeripheral, advertisedName: String?, advertisedServices: [CBUUID]) -> Bool {
+        if advertisedServices.contains(CBUUID(string: config.serviceUUID)) {
+            return true
+        }
         guard !config.deviceNamePrefix.isEmpty else {
             return true
         }
@@ -270,7 +273,8 @@ extension StickBluetoothClient: CBCentralManagerDelegate {
         rssi RSSI: NSNumber
     ) {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        guard accepts(peripheral: peripheral, advertisedName: advertisedName) else {
+        let advertisedServices = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+        guard accepts(peripheral: peripheral, advertisedName: advertisedName, advertisedServices: advertisedServices) else {
             return
         }
 

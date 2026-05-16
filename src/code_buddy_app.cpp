@@ -104,6 +104,7 @@ void wakeScreen();
 bool promptPending();
 void closeOverlays();
 void drawOverlays(const Palette& palette);
+void releaseRuntime();
 
 bool ensureRuntimeReady() {
   if (runtimeReady) {
@@ -131,7 +132,41 @@ bool ensureRuntimeReady() {
   buddySetPeek(false);
   characterSetPeek(false);
   runtimeReady = true;
+  Serial.printf("[codebuddy] runtime ready heap=%u\n", ESP.getFreeHeap());
   return true;
+}
+
+void releaseRuntime() {
+  if (transferFile) {
+    transferFile.close();
+  }
+  transferActive = false;
+  transferExpected = 0;
+  transferWritten = 0;
+  transferTotal = 0;
+  transferTotalWritten = 0;
+  transferName[0] = '\0';
+
+  portENTER_CRITICAL(&rxMux);
+  rxHead = 0;
+  rxTail = 0;
+  rxOverflow = false;
+  portEXIT_CRITICAL(&rxMux);
+  lineLength = 0;
+
+  if (runtimeReady) {
+    characterClose();
+  }
+  if (spriteCreated) {
+    spr.deleteSprite();
+    spriteCreated = false;
+  }
+
+  runtimeReady = false;
+  gifAvailable = false;
+  buddyMode = true;
+  screenDirty = false;
+  Serial.printf("[codebuddy] runtime released heap=%u\n", ESP.getFreeHeap());
 }
 
 void safeCopyName(char* dest, size_t destSize, const char* source) {
@@ -1712,6 +1747,7 @@ void codeBuddyAppStop() {
     M5.Display.wakeup();
     screenOff = false;
   }
+  releaseRuntime();
   sharedBleHandoffToAdvertisement(kSharedBleDeviceName, kStickLinkServiceUuid);
   M5.Display.setRotation(1);
 }

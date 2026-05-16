@@ -3,6 +3,9 @@
 Native SwiftUI macOS menu bar app for receiving StickS3 BLE events and Remote
 Mic audio.
 
+For the full StickS3 firmware workflow, launcher controls, CodeBuddy setup, and
+repository-level regression check, see the root `README.md`.
+
 ## Run Locally
 
 From this folder:
@@ -89,6 +92,10 @@ Empty `allowedApps` and `allowedMessageTypes` means accept all values. Use the
 6. Open Remote Mic on the StickS3.
 7. Click into any text editor.
 8. Hold Button A, speak into the StickS3, then release Button A.
+
+The StickS3 should advertise as `StickS3 Link` when Remote Mic is active. If
+CodeBuddy was used first, leaving CodeBuddy or opening Remote Mic switches the
+shared BLE advertisement back to Stick Link mode for this app.
 
 Expected log/output:
 

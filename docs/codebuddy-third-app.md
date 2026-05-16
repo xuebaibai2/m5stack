@@ -96,6 +96,13 @@ their app-specific characteristics and message parsing.
   GIF character, stats/settings, and runtime render state initialize when the
   third app is opened. This keeps heap available for Weather TLS requests and
   avoids `HTTP status -1` failures caused by early CodeBuddy sprite allocation.
+- CodeBuddy now releases its GIF/runtime sprite and pending transfer/RX buffers
+  when leaving the app. This restores heap for Weather HTTPS requests and Remote
+  Mic capture after CodeBuddy has been opened.
+- Opening Remote Mic verifies the shared BLE advertisement mode and switches
+  back to `StickS3 Link` / Stick Link service mode before starting microphone
+  capture only when needed. This lets the macOS Remote Mic app reconnect after
+  CodeBuddy mode without dropping an already-correct Remote Mic connection.
 - Guarded Remote Mic stop handling so a Button A release only stops recording
   if the matching Button A press was observed while Remote Mic was active.
 - Local CodeBuddy venv note: this workspace's Python 3.13 venv did not process
@@ -117,11 +124,13 @@ their app-specific characteristics and message parsing.
   lets the existing Remote Mic app and CodeBuddy host reconnect to the intended
   mode instead of sharing a stale central connection.
 - Advertisement payloads are mode-specific. Normal launcher/Remote Mic mode
-  advertises only the Stick Link service UUID with `StickS3 Link` in scan
-  response. CodeBuddy mode advertises only the Nordic UART Service UUID with
-  `Codex-StickS3` in scan response. Serial logs now print `[ble] configured
-  advertisement ...`, `[ble] handoff ...`, and `[ble] start advertising` to
-  diagnose discovery failures from a monitor transcript.
+  puts `StickS3 Link` in the primary advertisement and the Stick Link service
+  UUID in scan response so the existing macOS menu bar app's name-prefix scan
+  can find it reliably. CodeBuddy mode advertises the Nordic UART Service UUID
+  with `Codex-StickS3` in scan response for the upstream CodeBuddy host. Serial
+  logs now print `[ble] configured advertisement ...`, `[ble] handoff ...`, and
+  `[ble] start advertising` to diagnose discovery failures from a monitor
+  transcript.
 - First-run optional NVS keys are checked before reads so missing CodeBuddy
   stats/owner/name preferences do not emit noisy `NOT_FOUND` logs.
 - `run-code-buddy.sh` prints discovered BLE names and service UUIDs by default

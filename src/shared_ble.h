@@ -15,6 +15,8 @@ void sharedBleAddAdvertisedService(const char* serviceUuid);
 void sharedBleStartAdvertising();
 void sharedBleSetDeviceName(const char* deviceName);
 void sharedBleUseAdvertisement(const char* deviceName, const char* serviceUuid);
+bool sharedBleAdvertisementMatches(const char* deviceName,
+                                   const char* serviceUuid);
 void sharedBleHandoffToDeviceName(const char* deviceName);
 void sharedBleHandoffToAdvertisement(const char* deviceName,
                                      const char* serviceUuid);

@@ -50,10 +50,13 @@ nearby BLE peripherals whose advertised name starts with the configured
 `StickS3` prefix, then connects and discovers the custom Stick Link service
 through CoreBluetooth.
 
-The name-prefix scan is intentional. The shared firmware also exposes the
-CodeBuddy Nordic UART service, and a small BLE advertisement cannot always fit
-multiple 128-bit service UUIDs plus the local name. Discovering by name first
-keeps Remote Mic connectable while both services exist on the same StickS3.
+The name-prefix scan is intentional. In normal launcher/Remote Mic mode the
+firmware puts `StickS3 Link` in the primary advertisement and the Stick Link
+service UUID in scan response. The Mac app also accepts an advertisement that
+contains the Stick Link service UUID, which makes discovery resilient if
+CoreBluetooth reports the service before the local name. CodeBuddy mode keeps
+its separate `Codex-StickS3` / Nordic UART advertisement so the CodeBuddy host
+can still discover it.
 
 1. Flash and boot the StickS3 firmware.
 2. Open the Mac app from `mac/StickLinkMenuBar`.
