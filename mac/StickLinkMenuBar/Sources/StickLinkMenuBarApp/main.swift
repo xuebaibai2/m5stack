@@ -165,7 +165,12 @@ struct StickLinkRootView: View {
                         Label("Weather", systemImage: "cloud.sun")
                     }
 
-                DeviceFirmwareConfigView(store: model.firmwareConfigStore)
+                DeviceFirmwareConfigView(
+                    store: model.firmwareConfigStore,
+                    client: model.client,
+                    onScan: { model.client.startAutoConnect() },
+                    onDisconnect: { model.client.disconnect() }
+                )
                     .tabItem {
                         Label("Device", systemImage: "switch.2")
                     }
@@ -200,11 +205,7 @@ struct StickLinkStatusTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            StatusView(
-                client: model.client,
-                onScan: { model.client.startScan() },
-                onDisconnect: { model.client.disconnect() }
-            )
+            StatusView(client: model.client)
 
             Divider()
 

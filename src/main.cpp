@@ -2,6 +2,7 @@
 #include <M5GFX.h>
 #include <M5Unified.h>
 
+#include "code_buddy_app.h"
 #include "remote_mic_app.h"
 #include "status_bar.h"
 #include "weather_app.h"
@@ -22,7 +23,7 @@ struct AppDefinition {
 const AppDefinition kApps[] = {
     {"Weather App"},
     {"Remote Mic"},
-    {"Settings App"},
+    {"CodeBuddy"},
 };
 
 constexpr size_t kAppCount = sizeof(kApps) / sizeof(kApps[0]);
@@ -32,6 +33,7 @@ size_t selectedApp = 0;
 size_t runningApp = 0;
 bool buttonAHoldHandled = false;
 bool buttonBHoldHandled = false;
+bool remoteMicButtonAActive = false;
 
 void drawMenu() {
   M5.Display.clear(TFT_BLACK);
@@ -79,6 +81,11 @@ void drawApp(size_t appIndex) {
     return;
   }
 
+  if (appIndex == 2) {
+    codeBuddyAppStart();
+    return;
+  }
+
   drawPlaceholderApp(appIndex);
 }
 
@@ -87,6 +94,7 @@ void launchSelectedApp() {
   currentScreen = Screen::App;
   buttonAHoldHandled = false;
   buttonBHoldHandled = false;
+  remoteMicButtonAActive = false;
   drawApp(runningApp);
 }
 
@@ -95,11 +103,14 @@ void returnToMenu() {
     weatherAppStop();
   } else if (runningApp == 1) {
     remoteMicAppStop();
+  } else if (runningApp == 2) {
+    codeBuddyAppStop();
   }
 
   currentScreen = Screen::Menu;
   buttonAHoldHandled = false;
   buttonBHoldHandled = false;
+  remoteMicButtonAActive = false;
   drawMenu();
 }
 
@@ -137,10 +148,12 @@ void handleAppInput() {
     }
 
     if (M5.BtnA.wasPressed()) {
+      remoteMicButtonAActive = true;
       remoteMicAppStartRecording();
     }
 
-    if (M5.BtnA.wasReleased()) {
+    if (remoteMicButtonAActive && M5.BtnA.wasReleased()) {
+      remoteMicButtonAActive = false;
       remoteMicAppStopRecording();
     }
 
@@ -155,6 +168,12 @@ void handleAppInput() {
 
   if (runningApp == 0 && M5.BtnA.wasClicked()) {
     weatherAppRefresh();
+  } else if (runningApp == 2) {
+    if (M5.BtnA.wasClicked()) {
+      codeBuddyAppButtonA();
+    } else if (M5.BtnB.wasClicked()) {
+      codeBuddyAppButtonB();
+    }
   }
 }
 
@@ -170,6 +189,7 @@ void setup() {
   M5.Display.setTextWrap(false);
   weatherAppBegin();
   remoteMicAppBegin();
+  codeBuddyAppBegin();
   drawMenu();
 }
 
@@ -190,6 +210,8 @@ void loop() {
         weatherAppUpdate();
       } else if (runningApp == 1) {
         remoteMicAppUpdate();
+      } else if (runningApp == 2) {
+        codeBuddyAppUpdate();
       }
       break;
   }

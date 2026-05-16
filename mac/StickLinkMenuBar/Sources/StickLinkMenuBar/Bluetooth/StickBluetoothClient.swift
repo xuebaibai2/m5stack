@@ -92,6 +92,7 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
     public func startAutoConnect() {
         autoConnectEnabled = true
         shouldAutoScan = true
+        logStore.append(.info, "Auto connect enabled")
         startScan()
     }
 
@@ -105,10 +106,9 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
         case .poweredOn:
             shouldAutoScan = false
             reconnectTimer?.invalidate()
-            let service = CBUUID(string: config.serviceUUID)
             state = .scanning
-            logStore.append(.info, "Scanning for \(config.serviceUUID)")
-            central.scanForPeripherals(withServices: [service], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            logStore.append(.info, "Scanning for \(config.deviceNamePrefix) device")
+            central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
             scanTimer?.invalidate()
             scanTimer = Timer.scheduledTimer(withTimeInterval: config.scanTimeoutSeconds, repeats: false) { [weak self] _ in
                 self?.stopScanDueToTimeout()
@@ -201,11 +201,11 @@ public final class StickBluetoothClient: NSObject, ObservableObject {
         }
     }
 
-    private func accepts(peripheral: CBPeripheral) -> Bool {
+    private func accepts(peripheral: CBPeripheral, advertisedName: String?) -> Bool {
         guard !config.deviceNamePrefix.isEmpty else {
             return true
         }
-        guard let name = peripheral.name else {
+        guard let name = peripheral.name ?? advertisedName else {
             return false
         }
         return name.hasPrefix(config.deviceNamePrefix)
@@ -269,7 +269,8 @@ extension StickBluetoothClient: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
-        guard accepts(peripheral: peripheral) else {
+        let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        guard accepts(peripheral: peripheral, advertisedName: advertisedName) else {
             return
         }
 
@@ -278,7 +279,7 @@ extension StickBluetoothClient: CBCentralManagerDelegate {
         self.peripheral = peripheral
         peripheral.delegate = self
 
-        let name = peripheral.name ?? "Stick device"
+        let name = peripheral.name ?? advertisedName ?? "Stick device"
         deviceInfo.name = name
         deviceInfo.identifier = peripheral.identifier
         deviceInfo.rssi = RSSI.intValue

@@ -31,13 +31,44 @@ public struct WeatherFirmwareConfigView: View {
 
 public struct DeviceFirmwareConfigView: View {
     @ObservedObject var store: FirmwareConfigStore
+    @ObservedObject var client: StickBluetoothClient
+    let onScan: () -> Void
+    let onDisconnect: () -> Void
 
-    public init(store: FirmwareConfigStore) {
+    public init(
+        store: FirmwareConfigStore,
+        client: StickBluetoothClient,
+        onScan: @escaping () -> Void,
+        onDisconnect: @escaping () -> Void
+    ) {
         self.store = store
+        self.client = client
+        self.onScan = onScan
+        self.onDisconnect = onDisconnect
     }
 
     public var body: some View {
         Form {
+            Section {
+                HStack {
+                    Circle()
+                        .fill(client.state.isConnected ? Color.green : Color.orange)
+                        .frame(width: 10, height: 10)
+                    Text(client.state.label)
+                    Spacer()
+                }
+
+                HStack {
+                    Button("Scan", action: onScan)
+                        .keyboardShortcut("r")
+                    Button("Disconnect", action: onDisconnect)
+                        .disabled(!client.state.isConnected)
+                    Spacer()
+                }
+            } header: {
+                Text("BLE Connection")
+            }
+
             Section {
                 TextField("Wi-Fi SSID", text: $store.config.wifiSSID)
                 SecureField("Wi-Fi Password", text: $store.config.wifiPassword)

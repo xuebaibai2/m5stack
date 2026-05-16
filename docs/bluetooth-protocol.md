@@ -159,3 +159,46 @@ characteristic. When Button A is released, the StickS3 sends:
 ```
 
 The Mac app can filter JSON events by `app` and `type` through runtime config.
+
+## Shared BLE Server And CodeBuddy
+
+Firmware now owns BLE through one shared server. The same StickS3 peripheral
+advertises both:
+
+- the Stick Link service used by Remote Mic and weather configuration
+- the CodeBuddy Nordic UART Service
+
+The shared advertising name is:
+
+```text
+StickS3 Link
+```
+
+The Stick Link name preserves compatibility with the existing macOS companion
+app's `StickS3` name-prefix filter. The macOS Stick Link app scans by that
+name prefix, then discovers the Stick Link service after connecting. This avoids
+depending on the Stick Link service UUID being present in the advertisement
+payload when the shared firmware also exposes the CodeBuddy Nordic UART service.
+
+CodeBuddy Nordic UART identifiers:
+
+```text
+Service: 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+RX:      6e400002-b5a3-f393-e0a9-e50e24dcca9e
+TX:      6e400003-b5a3-f393-e0a9-e50e24dcca9e
+```
+
+CodeBuddy RX receives newline-delimited UTF-8 JSON from the desktop. CodeBuddy
+TX sends newline-delimited UTF-8 JSON notifications back to the desktop.
+
+Implemented CodeBuddy BLE support:
+
+- heartbeat snapshot parsing
+- prompt approve/deny responses
+- `time` sync
+- `owner`, `name`, `status`, and `unpair` commands
+- folder-push commands: `char_begin`, `file`, `chunk`, `file_end`, `char_end`
+
+Folder-push files are stored under LittleFS at `/characters`, matching the
+upstream CodeBuddy firmware layout. `char_end` attempts to load the transferred
+character immediately through the CodeBuddy GIF renderer.

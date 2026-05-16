@@ -2,15 +2,14 @@
 
 #include <Arduino.h>
 #include <BLE2902.h>
-#include <BLEAdvertising.h>
 #include <BLECharacteristic.h>
-#include <BLEDevice.h>
 #include <BLEServer.h>
 #include <cstring>
 #include <M5GFX.h>
 #include <M5Unified.h>
 
 #include "remote_mic_audio_config.h"
+#include "shared_ble.h"
 #include "stick_link_protocol.h"
 #include "weather_app.h"
 
@@ -37,13 +36,11 @@ constexpr uint8_t kRemoteMicNoiseFilterLevel = 0;
 constexpr uint8_t kRemoteMicOverSampling = 4;
 constexpr uint8_t kRemoteMicPrimeChunks = 3;
 
-BLEServer* bleServer = nullptr;
 BLECharacteristic* messageCharacteristic = nullptr;
 BLECharacteristic* deviceInfoCharacteristic = nullptr;
 BLECharacteristic* audioCharacteristic = nullptr;
 
 bool bleStarted = false;
-bool bleConnected = false;
 bool appVisible = false;
 bool screenDirty = false;
 bool recording = false;
@@ -71,20 +68,11 @@ char pendingWeatherLongitude[18] = "";
 char pendingWeatherTimezone[40] = "";
 portMUX_TYPE commandMux = portMUX_INITIALIZER_UNLOCKED;
 
-class RemoteMicServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer*) override {
-    bleConnected = true;
-    snprintf(lastStatus, sizeof(lastStatus), "Mac connected");
-    screenDirty = true;
-  }
-
-  void onDisconnect(BLEServer* server) override {
-    bleConnected = false;
-    snprintf(lastStatus, sizeof(lastStatus), "Disconnected, advertising");
-    screenDirty = true;
-    server->startAdvertising();
-  }
-};
+void handleSharedBleConnection(bool connected) {
+  snprintf(lastStatus, sizeof(lastStatus),
+           connected ? "Mac connected" : "Disconnected, advertising");
+  screenDirty = true;
+}
 
 void sendStickLinkEvent(const char* app, const char* type, const char* name,
                         const char* text) {
@@ -93,7 +81,7 @@ void sendStickLinkEvent(const char* app, const char* type, const char* name,
       stickLinkEncodeEvent(app, type, name, text, millis(), sequenceNumber);
   if (messageCharacteristic != nullptr) {
     messageCharacteristic->setValue(payload.c_str());
-    if (bleConnected) {
+    if (sharedBleConnected()) {
       messageCharacteristic->notify();
     }
   }
@@ -167,22 +155,16 @@ String deviceInfoJson() {
   JsonDocument doc;
   doc["v"] = 1;
   doc["name"] = kStickLinkBleName;
-  doc["device"] = "M5Stack StickS3";
-  doc["role"] = "ble_peripheral";
   doc["service"] = kStickLinkServiceUuid;
-  doc["message_characteristic"] = kStickLinkMessageCharacteristicUuid;
-  doc["device_info_characteristic"] = kStickLinkDeviceInfoCharacteristicUuid;
-  doc["audio_characteristic"] = kStickLinkAudioCharacteristicUuid;
   doc["audio_sample_rate"] = kStickLinkAudioSampleRate;
-  doc["audio_format"] = "pcm_u12le_packed_mono";
-  doc["audio_mode"] = "live_compressed_stream";
+  doc["audio_format"] = "pcm12";
   doc["mic_capture_sample_rate"] = kRemoteMicCaptureSampleRate;
   doc["mic_magnification"] = kRemoteMicMagnification;
   doc["mic_noise_filter_level"] = kRemoteMicNoiseFilterLevel;
   doc["mic_over_sampling"] = kRemoteMicOverSampling;
   doc["codec_adc_volume_register"] = remoteMicCodecAdcVolumeRegister();
   doc["codec_adc_volume"] = remoteMicCodecAdcVolumeValue();
-  doc["downsample_filter"] = "fir_5_tap_binomial";
+  doc["downsample_filter"] = "fir5";
 
   String output;
   serializeJson(doc, output);
@@ -196,8 +178,8 @@ void drawConnectionIndicator() {
 
   M5.Display.fillRect(kConnectionX - 8, kConnectionY - 8, 20, 20, TFT_BLACK);
   M5.Display.fillCircle(kConnectionX, kConnectionY, 5,
-                        bleConnected ? TFT_GREEN : TFT_ORANGE);
-  displayedBleConnected = bleConnected;
+                        sharedBleConnected() ? TFT_GREEN : TFT_ORANGE);
+  displayedBleConnected = sharedBleConnected();
 }
 
 void drawStatusValue() {
@@ -208,7 +190,8 @@ void drawStatusValue() {
   M5.Display.fillRect(kStatusValueX, kStatusValueY, kStatusValueW,
                       kStatusValueH, TFT_BLACK);
   M5.Display.setTextSize(1);
-  M5.Display.setTextColor(bleConnected ? TFT_GREEN : TFT_ORANGE, TFT_BLACK);
+  M5.Display.setTextColor(sharedBleConnected() ? TFT_GREEN : TFT_ORANGE,
+                          TFT_BLACK);
   M5.Display.setCursor(kStatusValueX, kStatusValueY);
   M5.Display.print(lastStatus);
   strlcpy(displayedStatus, lastStatus, sizeof(displayedStatus));
@@ -232,7 +215,7 @@ void drawChunkValue() {
 }
 
 void drawDynamicRegions(bool force = false) {
-  if (force || displayedBleConnected != bleConnected) {
+  if (force || displayedBleConnected != sharedBleConnected()) {
     drawConnectionIndicator();
   }
 
@@ -279,15 +262,6 @@ void drawRemoteMicScreen() {
 
   drawDynamicRegions(true);
   screenDirty = false;
-}
-
-void startAdvertising() {
-  BLEAdvertising* advertising = BLEDevice::getAdvertising();
-  advertising->addServiceUUID(kStickLinkServiceUuid);
-  advertising->setScanResponse(true);
-  advertising->setMinPreferred(0x06);
-  advertising->setMinPreferred(0x12);
-  BLEDevice::startAdvertising();
 }
 
 int32_t captureFrameMono(const int16_t* input, size_t frame) {
@@ -351,7 +325,7 @@ void sendCompletedCaptureChunk(const int16_t* samples) {
   }
 
   ++audioChunkCount;
-  if (bleConnected && audioCharacteristic != nullptr) {
+  if (sharedBleConnected() && audioCharacteristic != nullptr) {
     downsampleCaptureChunk(samples, audioBuffer, kStickLinkAudioSamplesPerChunk);
     encodePcm12Chunk(audioBuffer, kStickLinkAudioSamplesPerChunk, pcm12Buffer);
     audioCharacteristic->setValue(pcm12Buffer, sizeof(pcm12Buffer));
@@ -416,7 +390,9 @@ void startRemoteMicInput() {
     }
     M5.Mic.end();
   }
-  M5.Speaker.end();
+  if (M5.Speaker.isRunning()) {
+    M5.Speaker.end();
+  }
   configureRemoteMicInput();
   M5.Mic.begin();
   applyRemoteMicCodecInputLevel();
@@ -442,13 +418,10 @@ void remoteMicAppBegin() {
     return;
   }
 
-  BLEDevice::init(kStickLinkBleName);
-  BLEDevice::setMTU(185);
+  sharedBleBegin(kSharedBleDeviceName);
+  sharedBleRegisterConnectionCallback(handleSharedBleConnection);
 
-  bleServer = BLEDevice::createServer();
-  bleServer->setCallbacks(new RemoteMicServerCallbacks());
-
-  BLEService* service = bleServer->createService(kStickLinkServiceUuid);
+  BLEService* service = sharedBleServer()->createService(kStickLinkServiceUuid);
 
   messageCharacteristic = service->createCharacteristic(
       kStickLinkMessageCharacteristicUuid,
@@ -468,7 +441,7 @@ void remoteMicAppBegin() {
   audioCharacteristic->addDescriptor(new BLE2902());
 
   service->start();
-  startAdvertising();
+  sharedBleUseAdvertisement(kSharedBleDeviceName, kStickLinkServiceUuid);
 
   bleStarted = true;
   snprintf(lastStatus, sizeof(lastStatus), "Advertising");
@@ -535,13 +508,13 @@ void remoteMicAppStartRecording() {
       stickLinkEncodeVoiceEvent("start", startText, lastSendAt, sequenceNumber);
   if (messageCharacteristic != nullptr) {
     messageCharacteristic->setValue(payload.c_str());
-    if (bleConnected) {
+    if (sharedBleConnected()) {
       messageCharacteristic->notify();
     }
   }
 
   snprintf(lastStatus, sizeof(lastStatus),
-           bleConnected ? "Recording" : "Recording, no Mac");
+           sharedBleConnected() ? "Recording" : "Recording, no Mac");
   Serial.println(payload);
   screenDirty = true;
   drawRemoteMicScreen();
@@ -569,12 +542,12 @@ void remoteMicAppStopRecording() {
                                 lastSendAt, sequenceNumber);
   if (messageCharacteristic != nullptr) {
     messageCharacteristic->setValue(payload.c_str());
-    if (bleConnected) {
+    if (sharedBleConnected()) {
       messageCharacteristic->notify();
     }
   }
   snprintf(lastStatus, sizeof(lastStatus),
-           bleConnected ? "Stopped" : "No Mac connected");
+           sharedBleConnected() ? "Stopped" : "No Mac connected");
   Serial.println(payload);
   screenDirty = true;
   drawRemoteMicScreen();
@@ -587,5 +560,5 @@ void remoteMicAppStop() {
 }
 
 bool remoteMicAppConnected() {
-  return bleConnected;
+  return sharedBleConnected();
 }

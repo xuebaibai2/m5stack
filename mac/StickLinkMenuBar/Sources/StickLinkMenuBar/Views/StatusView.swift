@@ -2,13 +2,9 @@ import SwiftUI
 
 public struct StatusView: View {
     @ObservedObject var client: StickBluetoothClient
-    let onScan: () -> Void
-    let onDisconnect: () -> Void
 
-    public init(client: StickBluetoothClient, onScan: @escaping () -> Void, onDisconnect: @escaping () -> Void) {
+    public init(client: StickBluetoothClient) {
         self.client = client
-        self.onScan = onScan
-        self.onDisconnect = onDisconnect
     }
 
     public var body: some View {
@@ -47,14 +43,6 @@ public struct StatusView: View {
                 }
             }
             .font(.caption)
-
-            HStack {
-                Button("Scan", action: onScan)
-                    .keyboardShortcut("r")
-                Button("Disconnect", action: onDisconnect)
-                    .disabled(!client.state.isConnected)
-                Spacer()
-            }
         }
     }
 }

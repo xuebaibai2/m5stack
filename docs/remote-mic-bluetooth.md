@@ -15,6 +15,9 @@ macOS menu bar app over BLE.
   transcription and output the text.
 - Long Button B returns to the launcher. Button A long press is reserved for
   push-to-talk while Remote Mic is open.
+- Firmware only sends the stop event for a Button A release that matches a
+  Button A press observed inside Remote Mic. This prevents stale launcher or
+  app-transition release events from stopping a later recording session.
 
 The BLE protocol is documented in `docs/bluetooth-protocol.md`.
 
@@ -42,8 +45,15 @@ ls /dev/cu.*
 
 ## Pair And Connect
 
-No separate macOS Bluetooth pairing step is required. The Mac app scans for the
-custom BLE service and connects directly through CoreBluetooth.
+No separate macOS Bluetooth pairing step is required. The Mac app scans for
+nearby BLE peripherals whose advertised name starts with the configured
+`StickS3` prefix, then connects and discovers the custom Stick Link service
+through CoreBluetooth.
+
+The name-prefix scan is intentional. The shared firmware also exposes the
+CodeBuddy Nordic UART service, and a small BLE advertisement cannot always fit
+multiple 128-bit service UUIDs plus the local name. Discovering by name first
+keeps Remote Mic connectable while both services exist on the same StickS3.
 
 1. Flash and boot the StickS3 firmware.
 2. Open the Mac app from `mac/StickLinkMenuBar`.
@@ -65,7 +75,7 @@ custom BLE service and connects directly through CoreBluetooth.
 - [ ] Button B selects Remote Mic.
 - [ ] Button A opens Remote Mic.
 - [ ] Remote Mic shows BLE advertising/connection status.
-- [ ] Mac app connects and reaches subscribed state.
+- [ ] Mac app discovers `StickS3 Link`, connects, and reaches subscribed state.
 - [ ] Holding Button A sends audio chunks.
 - [ ] Releasing Button A triggers Mac transcription.
 - [ ] Transcript is pasted into the focused text editor.
